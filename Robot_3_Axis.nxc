@@ -1,0 +1,525 @@
+/*
+Changelog
+
+20130723
+  + (22:46) Modified point structure definition, added AxisSpeed[MAX_AXES], replaced axis 1,2,3 with AxisPosition[MAX_AXES]
+  + Above is attempt, compilation failed while addresing something like val=myStruct[i].myStructMember[j];
+  + (23:59) Added fnc_LoadPoints and fnc_SavePoints. Integrated fnc_SavePoints into logic
+*/
+#define AXIS1 0
+#define AXIS2 1
+#define AXIS3 2
+
+#define AXIS1_P 20
+#define AXIS1_I 40
+#define AXIS1_D 100
+
+#define AXIS2_P 45
+#define AXIS2_I 45
+#define AXIS2_D 45
+
+#define AXIS3_P 45
+#define AXIS3_I 45
+#define AXIS3_D 45
+
+#define MAX_AXES 3
+
+#define AXIS_POWER 50
+
+#define AXIS_TEST_MOTION 250
+
+#define AXIS_STANDSTILL_VELOCITY_THRESHOLD 2
+#define AXIS_STANDSTILL_VELOCITY_HYSTERESIS 1
+
+#define MAX_POINTS 9
+
+
+#define ACTIVITY_TEACHPOINT1  0
+#define ACTIVITY_TEACHPOINT2  1
+#define ACTIVITY_TEACHPOINT3  2
+#define ACTIVITY_TEACHPOINT4  3
+#define ACTIVITY_TEACHPOINT5  4
+#define ACTIVITY_TEACHPOINT6  5
+#define ACTIVITY_TEACHPOINT7  6
+#define ACTIVITY_TEACHPOINT8  7
+#define ACTIVITY_TEACHPOINT9  8
+#define ACTIVITY_PP_P1_P9     9
+#define ACTIVITY_COMPLEX      10
+#define ACTIVITY_SAVE_POINTS  11
+#define MAX_ACTIVITIES        12
+
+#define ACTIVITY_TYPE_TEACH_POINT      0
+#define ACTIVITY_TYPE_POINT_TO_POINT   1
+#define ACTIVITY_TYPE_COMPLEX_1        2
+#define ACTIVITY_TYPE_SAVE_POINTS      3
+
+#define POSITION_REACHED_THRESHOLD 50
+
+#define ULTRASONIC_THRESHOLD 20
+
+#define IN_HOME_POSITION 0
+#define BEFORE_PICK_UP   1
+#define CHECK_PICK_UP_1  2
+#define PREP1_PICK_UP_1  3
+#define PREP2_PICK_UP_1  4
+#define PICK_UP_1        5
+#define TRANSPORT        6
+#define DROP_1           7
+#define DROP_2           8
+
+
+
+struct Point
+  {
+    long Axis1Position,Axis2Position,Axis3Position;
+    long Position[MAX_AXES];
+    byte Axis1Speed,Axis2Speed,Axis3Speed;
+  };
+Point myPoints[MAX_POINTS];
+int myActivePoint,myActivity,myActivityType;
+
+long myTachoCounts[MAX_AXES];
+int myActualMotorSpeed[MAX_AXES];
+bool myMotionInitiated[MAX_AXES];
+bool myMotionActive[MAX_AXES];
+bool myMotionStandstill[MAX_AXES];
+bool myMotionCommandOn[MAX_AXES];
+bool myGlobalPositionSetpointAvailable;
+int myUltrasonicDist;
+int myProgramState;
+
+bool myRequestSingleMotionCommand,myItineraryActive,myInitItinerary,myProgramActive,myInitProgram;
+string tempstr;
+
+bool fnc_LoadPoints()
+{
+return true;
+}
+
+bool fnc_SavePoints()
+{
+return true;
+}
+
+task INPUT()  {
+  int i;
+  bool myButtonCondition,wRE_ButtonPressed[3],wL_ButtonPressed[3];
+  while(true) {
+    myTachoCounts[AXIS1]=MotorTachoCount(OUT_A);
+    myTachoCounts[AXIS2]=MotorTachoCount(OUT_B);
+    myTachoCounts[AXIS3]=MotorTachoCount(OUT_C);
+    myActualMotorSpeed[AXIS1]=MotorActualSpeed(OUT_A);
+    myActualMotorSpeed[AXIS2]=MotorActualSpeed(OUT_B);
+    myActualMotorSpeed[AXIS3]=MotorActualSpeed(OUT_C);
+    myUltrasonicDist=SensorUS(S2);
+    if(Sensor(IN_1) == 1) {
+      myPoints[myActivePoint].Axis1Position=myTachoCounts[AXIS1];
+      myPoints[myActivePoint].Axis2Position=myTachoCounts[AXIS2];
+      myPoints[myActivePoint].Axis3Position=myTachoCounts[AXIS3];
+      myPoints[myActivePoint].Position[AXIS1]=myTachoCounts[AXIS1];
+      PlayFileEx("! Backup.rso", 3, false);}
+
+    for(i=0;i<3;i++) {
+        switch(i)
+              {
+                case 0:myButtonCondition=ButtonPressed(BTNRIGHT, false);break;
+                case 1:myButtonCondition=ButtonPressed(BTNLEFT, false);break;
+                case 2:myButtonCondition=ButtonPressed(BTNCENTER, false);break;
+              }
+
+            wRE_ButtonPressed[i]=(myButtonCondition && !wL_ButtonPressed[i]);
+            wL_ButtonPressed[i]=myButtonCondition;
+            if (wRE_ButtonPressed[i] && i==0 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive) {myActivity=(myActivity+1) % MAX_ACTIVITIES;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && i==1 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive) {myActivity=myActivity-1;if (myActivity<0) myActivity=MAX_ACTIVITIES-1;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && i==2)
+              {
+                switch(myActivityType)
+                  {
+                    case ACTIVITY_TYPE_TEACH_POINT:
+                      if (myGlobalPositionSetpointAvailable) myRequestSingleMotionCommand=true;
+                      break;
+                    case ACTIVITY_TYPE_POINT_TO_POINT:
+                      if (myGlobalPositionSetpointAvailable && !myItineraryActive) {myInitItinerary=true;}
+                      break;
+                    case ACTIVITY_TYPE_COMPLEX_1:
+                      myProgramActive=!myProgramActive;if (myProgramActive) {myInitProgram=true;}
+                      break;
+                    case ACTIVITY_TYPE_SAVE_POINTS:
+                      if (fnc_SavePoints()) {PlayFileEx("Good.rso", 3, false);}
+                      else                 { PlayFileEx("Error.rso", 3, false);}
+                      break;
+                  }
+              }
+          }
+
+    }
+}
+
+
+task HMI()
+{
+  string s;
+  while (true) {
+    ClearScreen();
+    s="A1:";
+    s=strcat(s,FormatNum("%05d,", myTachoCounts[AXIS1]));
+    s=strcat(s,FormatNum("%03d,",myActualMotorSpeed[AXIS1]));
+    if (myMotionActive[AXIS1]==true) tempstr="mov"; else tempstr="stp";
+    s=strcat(s,tempstr);
+    TextOut(0, LCD_LINE1,s);
+    s="A2:";
+    s=strcat(s,FormatNum("%05d,", myTachoCounts[AXIS2]));
+    s=strcat(s,FormatNum("%03d,",myActualMotorSpeed[AXIS2]));
+    if (myMotionActive[AXIS2]==true) tempstr="mov"; else tempstr="stp";
+    s=strcat(s,tempstr);
+    TextOut(0, LCD_LINE2,s);
+    s="A3:";
+    s=strcat(s,FormatNum("%05d,", myTachoCounts[AXIS3]));
+    s=strcat(s,FormatNum("%03d,",myActualMotorSpeed[AXIS3]));
+    if (myMotionActive[AXIS3]==true) tempstr="mov"; else tempstr="stp";
+    s=strcat(s,tempstr);
+    TextOut(0, LCD_LINE3,s);
+
+    switch(myActivityType)
+          {
+            case ACTIVITY_TYPE_TEACH_POINT:
+              s="Display point:P";
+              s=strcat(s,NumToStr(myActivePoint));
+              TextOut(0, LCD_LINE4,s);
+              s="P.Axis1:";
+              s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Axis1Position));
+              //s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Position[AXIS1]));//Axis1Position));
+              TextOut(0, LCD_LINE5,s);
+              s="P.Axis2:";
+              s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Axis2Position));
+              TextOut(0, LCD_LINE6,s);
+              s="P.Axis3:";
+              s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Axis3Position));
+              TextOut(0, LCD_LINE7,s);
+              s="Go point.Teach.";
+              TextOut(0, LCD_LINE8,s);
+              break;
+            case ACTIVITY_TYPE_POINT_TO_POINT:
+              s="Point to point";
+              TextOut(0, LCD_LINE4,s);
+              s="Travel from";
+              TextOut(0, LCD_LINE5,s);
+              s="points 0 to 8.";
+              TextOut(0, LCD_LINE6,s);
+              s="Active point:P";
+              s=strcat(s,NumToStr(myActivePoint));
+              TextOut(0, LCD_LINE7,s);
+              s="Start.Push stop.";
+              TextOut(0, LCD_LINE8,s);
+              break;
+            case ACTIVITY_TYPE_COMPLEX_1:
+              s="Complex";
+              TextOut(0, LCD_LINE4,s);
+              s="Ultrasonic:";
+              s=strcat(s,NumToStr(myUltrasonicDist));
+              TextOut(0, LCD_LINE5,s);
+              switch (myProgramState) {
+              case IN_HOME_POSITION:
+                s="Home";break;
+              case BEFORE_PICK_UP:
+                s="Before pick 1";break;
+              case CHECK_PICK_UP_1:
+                s="Check pick 1";break;
+              case PREP1_PICK_UP_1:
+                s="Prep 1 pick";break;
+              case PREP2_PICK_UP_1:
+                s="Prep 2 pick";break;
+              case PICK_UP_1:
+                s="Pick 1";break;
+              case TRANSPORT:
+                s="Transport";break;
+              case DROP_1:
+                s="Drop 1";break;
+              case DROP_2:
+                s="Drop 2";break;    }
+              TextOut(0, LCD_LINE6,s);
+              break;
+            case ACTIVITY_TYPE_SAVE_POINTS:
+              s="Save points to";
+              TextOut(0, LCD_LINE4,s);
+              s="file system";
+              TextOut(0, LCD_LINE5,s);
+          }
+    //FontTextOut( 10,20, "PropTiny.RIC", "Now is the winter of our discontent made glorious summer by this son of York.  And all the clouds that lowered upon our house in the deep bosom of the ocean buried.", DRAW_OPT_NORMAL|DRAW_OPT_FONT_DIR_L2RB|DRAW_OPT_FONT_WRAP );
+    Wait(MS_250);
+  }
+}
+
+task CONTROL()
+{
+  string s;
+  while(true) {
+    //Axis 1 standstill monitoring
+    if (myMotionInitiated[AXIS1] && abs(myActualMotorSpeed[AXIS1])>AXIS_STANDSTILL_VELOCITY_THRESHOLD+AXIS_STANDSTILL_VELOCITY_HYSTERESIS)
+      {myMotionActive[AXIS1]=true;myMotionInitiated[AXIS1]=false;}
+    if (myMotionActive[AXIS1] && abs(myActualMotorSpeed[AXIS1])<AXIS_STANDSTILL_VELOCITY_THRESHOLD-AXIS_STANDSTILL_VELOCITY_HYSTERESIS)
+      {myMotionStandstill[AXIS1]=true;myMotionActive[AXIS1]=false;}
+
+    //Axis 2 standstill monitoring
+    if (myMotionInitiated[AXIS2] && abs(myActualMotorSpeed[AXIS2])>AXIS_STANDSTILL_VELOCITY_THRESHOLD+AXIS_STANDSTILL_VELOCITY_HYSTERESIS)
+      {myMotionActive[AXIS2]=true;myMotionInitiated[AXIS2]=false;myMotionStandstill[AXIS2]=false;}
+    if (myMotionActive[AXIS2] && abs(myActualMotorSpeed[AXIS2])<AXIS_STANDSTILL_VELOCITY_THRESHOLD-AXIS_STANDSTILL_VELOCITY_HYSTERESIS)
+      {myMotionStandstill[AXIS2]=true;myMotionActive[AXIS2]=false;}
+
+    //Axis 3 standstill monitoring
+    if (myMotionInitiated[AXIS3] && abs(myActualMotorSpeed[AXIS3])>AXIS_STANDSTILL_VELOCITY_THRESHOLD+AXIS_STANDSTILL_VELOCITY_HYSTERESIS)
+      {myMotionActive[AXIS3]=true;myMotionInitiated[AXIS3]=false;myMotionStandstill[AXIS3]=false;}
+    if (myMotionActive[AXIS3] && abs(myActualMotorSpeed[AXIS3])<AXIS_STANDSTILL_VELOCITY_THRESHOLD-AXIS_STANDSTILL_VELOCITY_HYSTERESIS)
+      {myMotionStandstill[AXIS3]=true;myMotionActive[AXIS3]=false;}
+
+    //Global position available
+    if (myMotionStandstill[AXIS1] && myMotionStandstill[AXIS2] && myMotionStandstill[AXIS3])
+      {myGlobalPositionSetpointAvailable=true;myMotionStandstill[AXIS2]=false;myMotionStandstill[AXIS3]=false;myMotionStandstill[AXIS1]=false;
+       s="0";
+       s=strcat(s,NumToStr(myActivePoint));
+       s=strcat(s,".rso");
+       PlayFileEx(s, 3, false); Wait(MS_500);
+      }
+
+
+
+    if (myGlobalPositionSetpointAvailable)
+      {
+      if (myRequestSingleMotionCommand)
+        {
+          myRequestSingleMotionCommand=false;
+          myMotionCommandOn[AXIS1]=true;
+          myMotionCommandOn[AXIS2]=true;
+          myMotionCommandOn[AXIS3]=true;
+          myGlobalPositionSetpointAvailable=false;
+
+        }
+      //Wait(MS_500);
+      //Wait(SEC_2);
+
+      }
+
+    if (myActivity>=ACTIVITY_TEACHPOINT1 && myActivity<=ACTIVITY_TEACHPOINT9)
+      {
+            myActivityType=ACTIVITY_TYPE_TEACH_POINT;
+            myActivePoint=myActivity;
+          }
+
+        if (myActivity==ACTIVITY_COMPLEX) myActivityType=ACTIVITY_TYPE_COMPLEX_1;
+
+
+    if (myActivity==ACTIVITY_PP_P1_P9)
+      {
+        myActivityType=ACTIVITY_TYPE_POINT_TO_POINT;
+        if (myInitItinerary && myGlobalPositionSetpointAvailable)
+          {
+            myInitItinerary=false;
+            myItineraryActive=true;
+            myActivePoint=ACTIVITY_TEACHPOINT1;
+            myRequestSingleMotionCommand=true;
+          }
+        if (myItineraryActive && !myRequestSingleMotionCommand && myGlobalPositionSetpointAvailable)
+          {
+            myActivePoint=(myActivePoint+1) % (MAX_POINTS);
+            if (myActivePoint==ACTIVITY_TEACHPOINT9) {myRequestSingleMotionCommand=true;myItineraryActive=false;}
+            else {myRequestSingleMotionCommand=true;}
+          }
+       }
+    if (myActivity==ACTIVITY_SAVE_POINTS)
+      {
+        myActivityType=ACTIVITY_TYPE_SAVE_POINTS;
+      }
+    if (myActivity==ACTIVITY_COMPLEX)
+      {
+        myActivityType=ACTIVITY_TYPE_COMPLEX_1;
+        if (myProgramActive && myInitProgram)
+          {
+            myInitProgram=false;
+            myActivePoint=ACTIVITY_TEACHPOINT1;
+            myRequestSingleMotionCommand=true;
+          }
+        if (myProgramActive && !myRequestSingleMotionCommand && myGlobalPositionSetpointAvailable)
+          {
+             switch (myProgramState)
+                { case IN_HOME_POSITION:  Wait(SEC_2);myActivePoint=BEFORE_PICK_UP;myRequestSingleMotionCommand=true;myProgramState=BEFORE_PICK_UP;break;
+                  case BEFORE_PICK_UP:    myActivePoint=CHECK_PICK_UP_1;myRequestSingleMotionCommand=true;myProgramState=CHECK_PICK_UP_1;break;
+                  case CHECK_PICK_UP_1:   Wait(SEC_2);if(myUltrasonicDist<ULTRASONIC_THRESHOLD)
+                                          {myActivePoint=PREP1_PICK_UP_1;myRequestSingleMotionCommand=true;myProgramState=PREP1_PICK_UP_1;}
+                                          else
+                                          {myActivePoint=IN_HOME_POSITION;myRequestSingleMotionCommand=true;myProgramState=IN_HOME_POSITION;}
+                                          break;
+                  case PREP1_PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
+                  case PREP2_PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
+                  case PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
+                  case TRANSPORT:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
+                  case DROP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
+                  case DROP_2:myActivePoint=IN_HOME_POSITION;myProgramState=IN_HOME_POSITION;myRequestSingleMotionCommand=true;break;
+                }
+          }
+       }
+
+     }
+}
+
+task MOTION_AXIS1()
+{
+  byte p,i,d;
+  int me;
+  long diff;
+  me=AXIS1;
+  p=AXIS1_P;
+  i=AXIS1_I;
+  d=AXIS1_D;
+  while(true) {
+    if (myMotionCommandOn[me]) {
+      myMotionCommandOn[me]=false;
+      diff=myTachoCounts[me]-myPoints[myActivePoint].Axis1Position;
+      if (abs(diff)>POSITION_REACHED_THRESHOLD) {
+        myMotionInitiated[me]=true;
+        myMotionStandstill[me]=false;
+        myMotionActive[me]=false;
+        RotateMotorPID(OUT_A, myPoints[myActivePoint].Axis1Speed, diff*(-1),p,i,d);
+      }
+      else  {
+        myMotionStandstill[me]=true;
+      }
+    }
+  }
+}
+
+task MOTION_AXIS2()
+{
+  byte p,i,d;
+  int me;
+  long diff;
+  me=AXIS2;
+  p=AXIS2_P;
+  i=AXIS2_I;
+  d=AXIS2_D;
+  while(true) {
+    if (myMotionCommandOn[me]) {
+      myMotionCommandOn[me]=false;
+      diff=myTachoCounts[me]-myPoints[myActivePoint].Axis2Position;
+      if (abs(diff)>POSITION_REACHED_THRESHOLD) {
+        myMotionInitiated[me]=true;
+        myMotionStandstill[me]=false;
+        myMotionActive[me]=false;
+        RotateMotorPID(OUT_B, myPoints[myActivePoint].Axis2Speed, diff*(-1),p,i,d);
+      }
+      else  {
+        myMotionStandstill[me]=true;
+      }
+    }
+  }
+}
+
+task MOTION_AXIS3()
+{
+  byte p,i,d;
+  int me;
+  long diff;
+  me=AXIS3;
+  p=AXIS3_P;
+  i=AXIS3_I;
+  d=AXIS3_D;
+  while(true) {
+    if (myMotionCommandOn[me]) {
+      myMotionCommandOn[me]=false;
+      diff=myTachoCounts[me]-myPoints[myActivePoint].Axis3Position;
+      if (abs(diff)>POSITION_REACHED_THRESHOLD) {
+        myMotionInitiated[me]=true;
+        myMotionStandstill[me]=false;
+        myMotionActive[me]=false;
+        RotateMotorPID(OUT_C, myPoints[myActivePoint].Axis3Speed, diff*(-1),p,i,d);
+      }
+      else  {
+        myMotionStandstill[me]=true;
+      }
+    }
+  }
+}
+
+
+task main() {
+
+  //Initialisation
+  myMotionCommandOn[AXIS1]=false;myMotionCommandOn[AXIS2]=false;myMotionCommandOn[AXIS3]=false;
+  myMotionActive[AXIS1]=false;myMotionActive[AXIS2]=false;myMotionActive[AXIS3]=false;
+  myMotionStandstill[AXIS1]=false;myMotionStandstill[AXIS2]=false;myMotionStandstill[AXIS3]=false;
+  myGlobalPositionSetpointAvailable=true;
+  myActivityType=ACTIVITY_TEACHPOINT1;
+  myRequestSingleMotionCommand=false;
+  myInitItinerary=false;myItineraryActive=false;myInitProgram=false;
+  SetSensorTouch(IN_1);
+  SetSensorUltrasonic(IN_2);
+
+  myPoints[1].Axis1Position=AXIS_TEST_MOTION;
+  myPoints[1].Axis2Position=AXIS_TEST_MOTION;
+  myPoints[1].Axis3Position=AXIS_TEST_MOTION;
+
+  myPoints[2].Axis1Position=-AXIS_TEST_MOTION;
+  myPoints[2].Axis2Position=0;
+  myPoints[2].Axis3Position=-AXIS_TEST_MOTION;
+
+  myPoints[3].Axis1Position=0;
+  myPoints[3].Axis2Position=-AXIS_TEST_MOTION;
+  myPoints[3].Axis3Position=0;
+
+  myPoints[4].Axis1Position=-AXIS_TEST_MOTION;
+  myPoints[4].Axis2Position=AXIS_TEST_MOTION;
+  myPoints[4].Axis3Position=-AXIS_TEST_MOTION;
+
+  myPoints[5].Axis1Position=0;
+  myPoints[5].Axis2Position=-AXIS_TEST_MOTION;
+  myPoints[5].Axis3Position=AXIS_TEST_MOTION;
+
+  myPoints[6].Axis1Position=-AXIS_TEST_MOTION;
+  myPoints[6].Axis2Position=AXIS_TEST_MOTION;
+  myPoints[6].Axis3Position=0;
+
+  myPoints[7].Axis1Position=AXIS_TEST_MOTION;
+  myPoints[7].Axis2Position=-AXIS_TEST_MOTION;
+  myPoints[7].Axis3Position=AXIS_TEST_MOTION;
+
+  myPoints[8].Axis1Position=-AXIS_TEST_MOTION;
+  myPoints[8].Axis2Position=AXIS_TEST_MOTION;
+  myPoints[8].Axis3Position=-AXIS_TEST_MOTION;
+
+  myPoints[0].Axis1Speed=10;
+  myPoints[0].Axis2Speed=10;
+  myPoints[0].Axis3Speed=10;
+
+  myPoints[1].Axis1Speed=20;
+  myPoints[1].Axis2Speed=20;
+  myPoints[1].Axis3Speed=20;
+
+  myPoints[2].Axis1Speed=30;
+  myPoints[2].Axis2Speed=30;
+  myPoints[2].Axis3Speed=30;
+
+  myPoints[3].Axis1Speed=40;
+  myPoints[3].Axis2Speed=40;
+  myPoints[3].Axis3Speed=40;
+
+  myPoints[4].Axis1Speed=50;
+  myPoints[4].Axis2Speed=50;
+  myPoints[4].Axis3Speed=50;
+
+  myPoints[5].Axis1Speed=60;
+  myPoints[5].Axis2Speed=60;
+  myPoints[5].Axis3Speed=60;
+
+  myPoints[6].Axis1Speed=70;
+  myPoints[6].Axis2Speed=70;
+  myPoints[6].Axis3Speed=70;
+
+  myPoints[7].Axis1Speed=80;
+  myPoints[7].Axis2Speed=80;
+  myPoints[7].Axis3Speed=80;
+
+  myPoints[8].Axis1Speed=90;
+  myPoints[8].Axis2Speed=90;
+  myPoints[8].Axis3Speed=90;
+  //Task configuration
+  Precedes(INPUT,HMI,CONTROL, MOTION_AXIS1,MOTION_AXIS2,MOTION_AXIS3);
+}
