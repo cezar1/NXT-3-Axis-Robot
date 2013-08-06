@@ -1,6 +1,9 @@
 /*
 Changelog
 
+20130806
+  + (22:26) Modified structure definition, renamed to Point.Position, Point.Speed, replaced code to allow compiling
+
 20130723
   + (22:46) Modified point structure definition, added AxisSpeed[MAX_AXES], replaced axis 1,2,3 with AxisPosition[MAX_AXES]
   + Above is attempt, compilation failed while addresing something like val=myStruct[i].myStructMember[j];
@@ -27,6 +30,7 @@ Changelog
 #define AXIS_POWER 50
 
 #define AXIS_TEST_MOTION 250
+#define AXIS_TEST_SPEED  50
 
 #define AXIS_STANDSTILL_VELOCITY_THRESHOLD 2
 #define AXIS_STANDSTILL_VELOCITY_HYSTERESIS 1
@@ -71,11 +75,11 @@ Changelog
 
 struct Point
   {
-    long Axis1Position,Axis2Position,Axis3Position;
+    byte Speed[MAX_AXES];
     long Position[MAX_AXES];
-    byte Axis1Speed,Axis2Speed,Axis3Speed;
   };
 Point myPoints[MAX_POINTS];
+Point tempPoint;
 int myActivePoint,myActivity,myActivityType;
 
 long myTachoCounts[MAX_AXES];
@@ -113,10 +117,9 @@ task INPUT()  {
     myActualMotorSpeed[AXIS3]=MotorActualSpeed(OUT_C);
     myUltrasonicDist=SensorUS(S2);
     if(Sensor(IN_1) == 1) {
-      myPoints[myActivePoint].Axis1Position=myTachoCounts[AXIS1];
-      myPoints[myActivePoint].Axis2Position=myTachoCounts[AXIS2];
-      myPoints[myActivePoint].Axis3Position=myTachoCounts[AXIS3];
-      myPoints[myActivePoint].Position[AXIS1]=myTachoCounts[AXIS1];
+      myPoints[myActivePoint].Position[1]=myTachoCounts[AXIS1];
+      myPoints[myActivePoint].Position[2]=myTachoCounts[AXIS2];
+      myPoints[myActivePoint].Position[3]=myTachoCounts[AXIS3];
       PlayFileEx("! Backup.rso", 3, false);}
 
     for(i=0;i<3;i++) {
@@ -159,6 +162,7 @@ task INPUT()  {
 task HMI()
 {
   string s;
+  long val;
   while (true) {
     ClearScreen();
     s="A1:";
@@ -183,18 +187,21 @@ task HMI()
     switch(myActivityType)
           {
             case ACTIVITY_TYPE_TEACH_POINT:
+              tempPoint=myPoints[myActivePoint];
               s="Display point:P";
               s=strcat(s,NumToStr(myActivePoint));
               TextOut(0, LCD_LINE4,s);
               s="P.Axis1:";
-              s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Axis1Position));
-              //s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Position[AXIS1]));//Axis1Position));
+              val=tempPoint.Position[AXIS1];
+              s=strcat(s,FormatNum("%06d", val));
               TextOut(0, LCD_LINE5,s);
               s="P.Axis2:";
-              s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Axis2Position));
+              val=tempPoint.Position[AXIS2];
+              s=strcat(s,FormatNum("%06d", val));
               TextOut(0, LCD_LINE6,s);
               s="P.Axis3:";
-              s=strcat(s,FormatNum("%06d", myPoints[myActivePoint].Axis3Position));
+              val=tempPoint.Position[AXIS3];
+              s=strcat(s,FormatNum("%06d", val));
               TextOut(0, LCD_LINE7,s);
               s="Go point.Teach.";
               TextOut(0, LCD_LINE8,s);
@@ -373,12 +380,13 @@ task MOTION_AXIS1()
   while(true) {
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
-      diff=myTachoCounts[me]-myPoints[myActivePoint].Axis1Position;
+      tempPoint=myPoints[myActivePoint];
+      diff=myTachoCounts[me]-tempPoint.Position[AXIS1];
       if (abs(diff)>POSITION_REACHED_THRESHOLD) {
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_A, myPoints[myActivePoint].Axis1Speed, diff*(-1),p,i,d);
+        RotateMotorPID(OUT_A, tempPoint.Speed[AXIS1], diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -399,12 +407,13 @@ task MOTION_AXIS2()
   while(true) {
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
-      diff=myTachoCounts[me]-myPoints[myActivePoint].Axis2Position;
+      tempPoint=myPoints[myActivePoint];
+      diff=myTachoCounts[me]-tempPoint.Position[AXIS2];
       if (abs(diff)>POSITION_REACHED_THRESHOLD) {
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_B, myPoints[myActivePoint].Axis2Speed, diff*(-1),p,i,d);
+        RotateMotorPID(OUT_B, tempPoint.Speed[AXIS2], diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -425,12 +434,13 @@ task MOTION_AXIS3()
   while(true) {
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
-      diff=myTachoCounts[me]-myPoints[myActivePoint].Axis3Position;
+      tempPoint=myPoints[myActivePoint];
+      diff=myTachoCounts[me]-tempPoint.Position[AXIS3];
       if (abs(diff)>POSITION_REACHED_THRESHOLD) {
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_C, myPoints[myActivePoint].Axis3Speed, diff*(-1),p,i,d);
+        RotateMotorPID(OUT_C, tempPoint.Speed[AXIS3], diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -439,87 +449,75 @@ task MOTION_AXIS3()
   }
 }
 
+void init() {
 
-task main() {
+  myMotionCommandOn[AXIS1]=false;
+  myMotionCommandOn[AXIS2]=false;
+  myMotionCommandOn[AXIS3]=false;
 
-  //Initialisation
-  myMotionCommandOn[AXIS1]=false;myMotionCommandOn[AXIS2]=false;myMotionCommandOn[AXIS3]=false;
-  myMotionActive[AXIS1]=false;myMotionActive[AXIS2]=false;myMotionActive[AXIS3]=false;
-  myMotionStandstill[AXIS1]=false;myMotionStandstill[AXIS2]=false;myMotionStandstill[AXIS3]=false;
+  myMotionActive[AXIS1]=false;
+  myMotionActive[AXIS2]=false;
+  myMotionActive[AXIS3]=false;
+
+  myMotionStandstill[AXIS1]=false;
+  myMotionStandstill[AXIS2]=false;
+  myMotionStandstill[AXIS3]=false;
+
   myGlobalPositionSetpointAvailable=true;
   myActivityType=ACTIVITY_TEACHPOINT1;
   myRequestSingleMotionCommand=false;
   myInitItinerary=false;myItineraryActive=false;myInitProgram=false;
+
   SetSensorTouch(IN_1);
   SetSensorUltrasonic(IN_2);
 
-  myPoints[1].Axis1Position=AXIS_TEST_MOTION;
-  myPoints[1].Axis2Position=AXIS_TEST_MOTION;
-  myPoints[1].Axis3Position=AXIS_TEST_MOTION;
+  Point init;
+  ArrayInit(init.Position,0,MAX_AXES);
+  ArrayInit(init.Speed,0,MAX_AXES);
+  ArrayInit(myPoints,init,MAX_AXES);
 
-  myPoints[2].Axis1Position=-AXIS_TEST_MOTION;
-  myPoints[2].Axis2Position=0;
-  myPoints[2].Axis3Position=-AXIS_TEST_MOTION;
+  myPoints[1].Position[1]=AXIS_TEST_MOTION;
+  myPoints[1].Position[2]=AXIS_TEST_MOTION;
+  myPoints[1].Position[3]=AXIS_TEST_MOTION;
 
-  myPoints[3].Axis1Position=0;
-  myPoints[3].Axis2Position=-AXIS_TEST_MOTION;
-  myPoints[3].Axis3Position=0;
+  myPoints[2].Position[1]=-AXIS_TEST_MOTION;
+  myPoints[2].Position[2]=0;
+  myPoints[2].Position[3]=-AXIS_TEST_MOTION;
 
-  myPoints[4].Axis1Position=-AXIS_TEST_MOTION;
-  myPoints[4].Axis2Position=AXIS_TEST_MOTION;
-  myPoints[4].Axis3Position=-AXIS_TEST_MOTION;
+  myPoints[3].Position[1]=0;
+  myPoints[3].Position[2]=-AXIS_TEST_MOTION;
+  myPoints[3].Position[3]=0;
 
-  myPoints[5].Axis1Position=0;
-  myPoints[5].Axis2Position=-AXIS_TEST_MOTION;
-  myPoints[5].Axis3Position=AXIS_TEST_MOTION;
+  myPoints[4].Position[1]=-AXIS_TEST_MOTION;
+  myPoints[4].Position[2]=AXIS_TEST_MOTION;
+  myPoints[4].Position[3]=-AXIS_TEST_MOTION;
 
-  myPoints[6].Axis1Position=-AXIS_TEST_MOTION;
-  myPoints[6].Axis2Position=AXIS_TEST_MOTION;
-  myPoints[6].Axis3Position=0;
+  myPoints[5].Position[1]=0;
+  myPoints[5].Position[2]=-AXIS_TEST_MOTION;
+  myPoints[5].Position[3]=AXIS_TEST_MOTION;
 
-  myPoints[7].Axis1Position=AXIS_TEST_MOTION;
-  myPoints[7].Axis2Position=-AXIS_TEST_MOTION;
-  myPoints[7].Axis3Position=AXIS_TEST_MOTION;
+  myPoints[6].Position[1]=-AXIS_TEST_MOTION;
+  myPoints[6].Position[2]=AXIS_TEST_MOTION;
+  myPoints[6].Position[3]=0;
 
-  myPoints[8].Axis1Position=-AXIS_TEST_MOTION;
-  myPoints[8].Axis2Position=AXIS_TEST_MOTION;
-  myPoints[8].Axis3Position=-AXIS_TEST_MOTION;
+  myPoints[7].Position[1]=AXIS_TEST_MOTION;
+  myPoints[7].Position[2]=-AXIS_TEST_MOTION;
+  myPoints[7].Position[3]=AXIS_TEST_MOTION;
 
-  myPoints[0].Axis1Speed=10;
-  myPoints[0].Axis2Speed=10;
-  myPoints[0].Axis3Speed=10;
+  myPoints[8].Position[1]=-AXIS_TEST_MOTION;
+  myPoints[8].Position[2]=AXIS_TEST_MOTION;
+  myPoints[8].Position[3]=-AXIS_TEST_MOTION;
 
-  myPoints[1].Axis1Speed=20;
-  myPoints[1].Axis2Speed=20;
-  myPoints[1].Axis3Speed=20;
+  for (int i=0;i<=MAX_POINTS-1;i++){
+    myPoints[1].Speed[AXIS1]=AXIS_TEST_SPEED;
+    myPoints[2].Speed[AXIS2]=AXIS_TEST_SPEED;
+    myPoints[3].Speed[AXIS3]=AXIS_TEST_SPEED;
+  }
+}
 
-  myPoints[2].Axis1Speed=30;
-  myPoints[2].Axis2Speed=30;
-  myPoints[2].Axis3Speed=30;
-
-  myPoints[3].Axis1Speed=40;
-  myPoints[3].Axis2Speed=40;
-  myPoints[3].Axis3Speed=40;
-
-  myPoints[4].Axis1Speed=50;
-  myPoints[4].Axis2Speed=50;
-  myPoints[4].Axis3Speed=50;
-
-  myPoints[5].Axis1Speed=60;
-  myPoints[5].Axis2Speed=60;
-  myPoints[5].Axis3Speed=60;
-
-  myPoints[6].Axis1Speed=70;
-  myPoints[6].Axis2Speed=70;
-  myPoints[6].Axis3Speed=70;
-
-  myPoints[7].Axis1Speed=80;
-  myPoints[7].Axis2Speed=80;
-  myPoints[7].Axis3Speed=80;
-
-  myPoints[8].Axis1Speed=90;
-  myPoints[8].Axis2Speed=90;
-  myPoints[8].Axis3Speed=90;
+task main() {
+  //Initialisation
+  init();
   //Task configuration
   Precedes(INPUT,HMI,CONTROL, MOTION_AXIS1,MOTION_AXIS2,MOTION_AXIS3);
 }
