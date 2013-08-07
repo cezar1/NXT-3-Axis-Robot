@@ -1,5 +1,7 @@
 /*
 Changelog
+20130807
+	+ no change
 
 20130806
   + (22:26) Modified structure definition, renamed to Point.Position, Point.Speed, replaced code to allow compiling
