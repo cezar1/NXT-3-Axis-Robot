@@ -1,7 +1,8 @@
 /*
 Changelog
+
 20130807
-	+ no change
+  + (17:40) Added homing axis activities and type for homing
 
 20130806
   + (22:26) Modified structure definition, renamed to Point.Position, Point.Speed, replaced code to allow compiling
@@ -489,11 +490,11 @@ void init() {
   SetSensorUltrasonic(IN_2);
 
   Point init;
-  
+
   ArrayInit(init.Position,0,MAX_AXES);
   ArrayInit(init.Speed,0,MAX_AXES);
   ArrayInit(myPoints,init,MAX_AXES);
-  
+
   myPoints[1].Position[1]=AXIS_TEST_MOTION;
   myPoints[1].Position[2]=AXIS_TEST_MOTION;
   myPoints[1].Position[3]=AXIS_TEST_MOTION;
