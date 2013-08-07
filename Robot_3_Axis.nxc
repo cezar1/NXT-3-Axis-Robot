@@ -50,12 +50,16 @@ Changelog
 #define ACTIVITY_PP_P1_P9     9
 #define ACTIVITY_COMPLEX      10
 #define ACTIVITY_SAVE_POINTS  11
-#define MAX_ACTIVITIES        12
+#define ACTIVITY_HOME_AXIS1   12
+#define ACTIVITY_HOME_AXIS2   13
+#define ACTIVITY_HOME_AXIS3   14
+#define MAX_ACTIVITIES        15
 
 #define ACTIVITY_TYPE_TEACH_POINT      0
 #define ACTIVITY_TYPE_POINT_TO_POINT   1
 #define ACTIVITY_TYPE_COMPLEX_1        2
 #define ACTIVITY_TYPE_SAVE_POINTS      3
+#define ACTIVITY_TYPE_HOME_AXIS        4
 
 #define POSITION_REACHED_THRESHOLD 50
 
@@ -75,12 +79,12 @@ Changelog
 
 struct Point
   {
-    byte Speed[MAX_AXES];
+    long Speed[MAX_AXES];
     long Position[MAX_AXES];
   };
 Point myPoints[MAX_POINTS];
 Point tempPoint;
-int myActivePoint,myActivity,myActivityType;
+int myActivePoint,myActivity,myActivityType,myHomingAxis;
 
 long myTachoCounts[MAX_AXES];
 int myActualMotorSpeed[MAX_AXES];
@@ -251,6 +255,12 @@ task HMI()
               TextOut(0, LCD_LINE4,s);
               s="file system";
               TextOut(0, LCD_LINE5,s);
+            case ACTIVITY_TYPE_HOME_AXIS:
+              s="Start homing";
+              TextOut(0, LCD_LINE4,s);
+              s="axis ";
+              s=strcat(s,NumToStr(myHomingAxis));
+              TextOut(0, LCD_LINE5,s);
           }
     //FontTextOut( 10,20, "PropTiny.RIC", "Now is the winter of our discontent made glorious summer by this son of York.  And all the clouds that lowered upon our house in the deep bosom of the ocean buried.", DRAW_OPT_NORMAL|DRAW_OPT_FONT_DIR_L2RB|DRAW_OPT_FONT_WRAP );
     Wait(MS_250);
@@ -335,6 +345,11 @@ task CONTROL()
     if (myActivity==ACTIVITY_SAVE_POINTS)
       {
         myActivityType=ACTIVITY_TYPE_SAVE_POINTS;
+      }
+    if (myActivity>=ACTIVITY_HOME_AXIS1 && myActivity<=ACTIVITY_HOME_AXIS3)
+      {
+        myHomingAxis=myActivity-ACTIVITY_HOME_AXIS1;
+        myActivityType=ACTIVITY_TYPE_HOME_AXIS;
       }
     if (myActivity==ACTIVITY_COMPLEX)
       {
@@ -472,10 +487,11 @@ void init() {
   SetSensorUltrasonic(IN_2);
 
   Point init;
+  
   ArrayInit(init.Position,0,MAX_AXES);
   ArrayInit(init.Speed,0,MAX_AXES);
   ArrayInit(myPoints,init,MAX_AXES);
-
+  
   myPoints[1].Position[1]=AXIS_TEST_MOTION;
   myPoints[1].Position[2]=AXIS_TEST_MOTION;
   myPoints[1].Position[3]=AXIS_TEST_MOTION;
