@@ -584,14 +584,14 @@ void init() {
   myPointsPosition[ACTIVITY_TEACHPOINT9][AXIS2]=67890;
   myPointsPosition[ACTIVITY_TEACHPOINT9][AXIS3]=98765;
   */
-  ///*
+  /*
   for (int i=0;i<=MAX_POINTS-1;i++){
     myPointsPosition[i][AXIS1]=i;
     myPointsSpeed[i][AXIS1]=AXIS_TEST_SPEED;
     myPointsSpeed[i][AXIS2]=AXIS_TEST_SPEED;
     myPointsSpeed[i][AXIS3]=AXIS_TEST_SPEED;
   }
-  //*/
+  */
 }
 
 task main() {
