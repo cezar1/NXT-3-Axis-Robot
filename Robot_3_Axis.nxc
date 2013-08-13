@@ -1,8 +1,12 @@
 /*
 Changelog
 
+20130813
+  + (16:37) Modified point data structure to contain
+
 20130807
   + (17:40) Added homing axis activities and type for homing
+  + (18:06) Added points saving and loading
 
 20130806
   + (22:26) Modified structure definition, renamed to Point.Position, Point.Speed, replaced code to allow compiling
@@ -12,6 +16,8 @@ Changelog
   + Above is attempt, compilation failed while addresing something like val=myStruct[i].myStructMember[j];
   + (23:59) Added fnc_LoadPoints and fnc_SavePoints. Integrated fnc_SavePoints into logic
 */
+#define HMI_DEBUG_STRING1 0 //If true will always display contents of myDebugString1 on line 8
+
 #define AXIS1 0
 #define AXIS2 1
 #define AXIS3 2
@@ -78,15 +84,20 @@ Changelog
 #define DROP_1           7
 #define DROP_2           8
 
-
+#define POINTS_FILENAME "Points.txt"
 
 struct Point
   {
-    long Speed[MAX_AXES];
+    long Speed_A1[MAX_AXES];
     long Position[MAX_AXES];
   };
-Point myPoints[MAX_POINTS];
-Point tempPoint;
+
+//Point myPoints[MAX_POINTS];
+
+long myPointsSpeed[MAX_POINTS][MAX_AXES];
+long myPointsPosition[MAX_POINTS][MAX_AXES];
+
+//Point tempPoint;
 int myActivePoint,myActivity,myActivityType,myHomingAxis;
 
 long myTachoCounts[MAX_AXES];
@@ -100,21 +111,84 @@ int myUltrasonicDist;
 int myProgramState;
 
 bool myRequestSingleMotionCommand,myItineraryActive,myInitItinerary,myProgramActive,myInitProgram;
-string tempstr;
+string tempstr,myDebugString1;
 
 bool fnc_LoadPoints()
 {
-return true;
+  byte fileHandle;
+  short fileSize;
+  unsigned int result;
+  result=OpenFileRead(POINTS_FILENAME, fileSize, fileHandle);
+  if (result==LDR_SUCCESS)
+  {
+  string line,tmp;
+  for(int i=ACTIVITY_TEACHPOINT1; i<MAX_POINTS; i++ )
+  {
+    line="00000,00000,00000,000,000,000";
+    ReadLn(fileHandle, line);
+    tmp=SubStr(line, 0, 5);
+    myPointsPosition[i][AXIS1]=StrToNum(tmp);
+    tmp=SubStr(line, 6, 5);
+    myPointsPosition[i][AXIS2]=StrToNum(tmp);
+    tmp=SubStr(line, 12, 5);
+    myPointsPosition[i][AXIS3]=StrToNum(tmp);
+    tmp=SubStr(line, 18, 3);
+    myPointsSpeed[i][AXIS1]=StrToNum(tmp);
+    tmp=SubStr(line, 22, 3);
+    myPointsSpeed[i][AXIS2]=StrToNum(tmp);
+    tmp=SubStr(line, 26, 3);
+    myPointsSpeed[i][AXIS3]=StrToNum(tmp);
+  }
+  CloseFile(fileHandle);
+  return true;
+  }
+  else
+  {
+  return false;
+  }
 }
 
 bool fnc_SavePoints()
 {
-return true;
+  byte fileHandle;
+  short fileSize = 512;
+  short bytesWritten;
+  string write,tmp;
+  unsigned int result;
+  DeleteFile(POINTS_FILENAME);
+  result=CreateFile(POINTS_FILENAME, fileSize, fileHandle);
+  if (result==LDR_SUCCESS)
+  {
+  for(int i=ACTIVITY_TEACHPOINT1; i<MAX_POINTS; i++ )
+    {
+      write = "";
+      tmp = FormatNum("%05d", myPointsPosition[i][AXIS1]);
+      write = StrCat(write, tmp);
+      tmp = FormatNum("%05d", myPointsPosition[i][AXIS2]);
+      write = StrCat(write, ",", tmp);
+      tmp = FormatNum("%05d", myPointsPosition[i][AXIS3]);
+      write = StrCat(write, ",", tmp);
+      tmp = FormatNum("%03d", myPointsSpeed[i][AXIS1]);
+      write = StrCat(write, ",", tmp);
+      tmp = FormatNum("%03d", myPointsSpeed[i][AXIS2]);
+      write = StrCat(write, ",", tmp);
+      tmp = FormatNum("%03d.", myPointsSpeed[i][AXIS3]);
+      write = StrCat(write, ",", tmp);
+      WriteLnString(fileHandle,write, bytesWritten);
+    }
+  CloseFile(fileHandle);
+  return true;
+  }
+  else
+  {
+  return false;
+  }
 }
 
 task INPUT()  {
   int i;
-  bool myButtonCondition,wRE_ButtonPressed[3],wL_ButtonPressed[3];
+  bool myButtonCondition,wRE_ButtonPressed[3],wL_ButtonPressed[3],wRE_Touch,wL_Touch,iE_Touch;
+  wRE_Touch=false;wL_Touch=false;
   while(true) {
     myTachoCounts[AXIS1]=MotorTachoCount(OUT_A);
     myTachoCounts[AXIS2]=MotorTachoCount(OUT_B);
@@ -123,11 +197,14 @@ task INPUT()  {
     myActualMotorSpeed[AXIS2]=MotorActualSpeed(OUT_B);
     myActualMotorSpeed[AXIS3]=MotorActualSpeed(OUT_C);
     myUltrasonicDist=SensorUS(S2);
-    if(Sensor(IN_1) == 1) {
-      myPoints[myActivePoint].Position[1]=myTachoCounts[AXIS1];
-      myPoints[myActivePoint].Position[2]=myTachoCounts[AXIS2];
-      myPoints[myActivePoint].Position[3]=myTachoCounts[AXIS3];
-      PlayFileEx("! Backup.rso", 3, false);}
+    iE_Touch=(Sensor(IN_1)==1);
+    wRE_Touch=(iE_Touch && !wL_Touch);
+    wL_Touch=iE_Touch;
+    if(wRE_Touch) {
+      for(i=AXIS1;i<MAX_AXES;i++) {
+      myPointsPosition[myActivePoint][i]=myTachoCounts[i];
+      }
+      PlayFileEx("! Backup.rso", 3, false);Wait(MS_500);}
 
     for(i=0;i<3;i++) {
         switch(i)
@@ -167,9 +244,10 @@ task INPUT()  {
 
 
 task HMI()
-{
+{ int i;
   string s;
   long val;
+  Point tmp;
   while (true) {
     ClearScreen();
     s="A1:";
@@ -194,22 +272,20 @@ task HMI()
     switch(myActivityType)
           {
             case ACTIVITY_TYPE_TEACH_POINT:
-              tempPoint=myPoints[myActivePoint];
               s="Display point:P";
               s=strcat(s,NumToStr(myActivePoint));
               TextOut(0, LCD_LINE4,s);
-              s="P.Axis1:";
-              val=tempPoint.Position[AXIS1];
-              s=strcat(s,FormatNum("%06d", val));
-              TextOut(0, LCD_LINE5,s);
-              s="P.Axis2:";
-              val=tempPoint.Position[AXIS2];
-              s=strcat(s,FormatNum("%06d", val));
-              TextOut(0, LCD_LINE6,s);
-              s="P.Axis3:";
-              val=tempPoint.Position[AXIS3];
-              s=strcat(s,FormatNum("%06d", val));
-              TextOut(0, LCD_LINE7,s);
+              for(i=1;i<=MAX_AXES;i++)
+              {
+               s="P.A";
+               s=strcat(s,NumToStr(i));
+               s=strcat(s,":");
+               val=myPointsPosition[myActivePoint][i-1];
+               s=strcat(s,FormatNum("%05d,", val));
+               val=myPointsSpeed[myActivePoint][i-1];
+               s=strcat(s,FormatNum("%03d", val));
+               TextOut(0, LCD_LINE5-(i-1)*8,s);
+              }
               s="Go point.Teach.";
               TextOut(0, LCD_LINE8,s);
               break;
@@ -258,15 +334,18 @@ task HMI()
               TextOut(0, LCD_LINE4,s);
               s="file system";
               TextOut(0, LCD_LINE5,s);
+              break;
             case ACTIVITY_TYPE_HOME_AXIS:
               s="Start homing";
               TextOut(0, LCD_LINE4,s);
               s="axis ";
-              s=strcat(s,NumToStr(myHomingAxis));
+              s=strcat(s,NumToStr(myHomingAxis+1));
               TextOut(0, LCD_LINE5,s);
+              break;
           }
-    //FontTextOut( 10,20, "PropTiny.RIC", "Now is the winter of our discontent made glorious summer by this son of York.  And all the clouds that lowered upon our house in the deep bosom of the ocean buried.", DRAW_OPT_NORMAL|DRAW_OPT_FONT_DIR_L2RB|DRAW_OPT_FONT_WRAP );
-    Wait(MS_250);
+    //FontTextOut( 0,60, "PropTiny.RIC", "Now is the winter of our discontent made glorious summer by this son of York.  And all the clouds that lowered upon our house in the deep bosom of the ocean buried.", DRAW_OPT_NORMAL|DRAW_OPT_FONT_DIR_L2RB|DRAW_OPT_FONT_WRAP );
+    if (HMI_DEBUG_STRING1) {s=myDebugString1;TextOut(0, LCD_LINE8,s);}
+    Wait(MS_500);
   }
 }
 
@@ -294,7 +373,10 @@ task CONTROL()
 
     //Global position available
     if (myMotionStandstill[AXIS1] && myMotionStandstill[AXIS2] && myMotionStandstill[AXIS3])
-      {myGlobalPositionSetpointAvailable=true;myMotionStandstill[AXIS2]=false;myMotionStandstill[AXIS3]=false;myMotionStandstill[AXIS1]=false;
+      {myGlobalPositionSetpointAvailable=true;
+       myMotionStandstill[AXIS2]=false;
+       myMotionStandstill[AXIS3]=false;
+       myMotionStandstill[AXIS1]=false;
        s="0";
        s=strcat(s,NumToStr(myActivePoint));
        s=strcat(s,".rso");
@@ -398,13 +480,12 @@ task MOTION_AXIS1()
   while(true) {
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
-      tempPoint=myPoints[myActivePoint];
-      diff=myTachoCounts[me]-tempPoint.Position[AXIS1];
+      diff=myTachoCounts[me]-myPointsPosition[myActivePoint][me];
       if (abs(diff)>POSITION_REACHED_THRESHOLD) {
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_A, tempPoint.Speed[AXIS1], diff*(-1),p,i,d);
+        RotateMotorPID(OUT_A, myPointsSpeed[myActivePoint][me], diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -425,13 +506,12 @@ task MOTION_AXIS2()
   while(true) {
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
-      tempPoint=myPoints[myActivePoint];
-      diff=myTachoCounts[me]-tempPoint.Position[AXIS2];
+      diff=myTachoCounts[me]-myPointsPosition[myActivePoint][me];
       if (abs(diff)>POSITION_REACHED_THRESHOLD) {
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_B, tempPoint.Speed[AXIS2], diff*(-1),p,i,d);
+        RotateMotorPID(OUT_B, myPointsSpeed[myActivePoint][me], diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -452,13 +532,12 @@ task MOTION_AXIS3()
   while(true) {
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
-      tempPoint=myPoints[myActivePoint];
-      diff=myTachoCounts[me]-tempPoint.Position[AXIS3];
+      diff=myTachoCounts[me]-myPointsPosition[myActivePoint][me];
       if (abs(diff)>POSITION_REACHED_THRESHOLD) {
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_C, tempPoint.Speed[AXIS3], diff*(-1),p,i,d);
+        RotateMotorPID(OUT_C, myPointsSpeed[myActivePoint][me], diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -468,7 +547,10 @@ task MOTION_AXIS3()
 }
 
 void init() {
-
+  myDebugString1="Debug string 1.";
+  if (fnc_LoadPoints()) {PlayFileEx("Good.rso", 3, false);}
+  else                  {PlayFileEx("Error.rso", 3, false);}
+  
   myMotionCommandOn[AXIS1]=false;
   myMotionCommandOn[AXIS2]=false;
   myMotionCommandOn[AXIS3]=false;
@@ -489,49 +571,27 @@ void init() {
   SetSensorTouch(IN_1);
   SetSensorUltrasonic(IN_2);
 
-  Point init;
+  /*
+  myPointsPosition[ACTIVITY_TEACHPOINT1][AXIS1]=AXIS_TEST_MOTION;
+  myPointsPosition[ACTIVITY_TEACHPOINT1][AXIS2]=AXIS_TEST_MOTION;
+  myPointsPosition[ACTIVITY_TEACHPOINT1][AXIS3]=AXIS_TEST_MOTION;
 
-  ArrayInit(init.Position,0,MAX_AXES);
-  ArrayInit(init.Speed,0,MAX_AXES);
-  ArrayInit(myPoints,init,MAX_AXES);
-
-  myPoints[1].Position[1]=AXIS_TEST_MOTION;
-  myPoints[1].Position[2]=AXIS_TEST_MOTION;
-  myPoints[1].Position[3]=AXIS_TEST_MOTION;
-
-  myPoints[2].Position[1]=-AXIS_TEST_MOTION;
-  myPoints[2].Position[2]=0;
-  myPoints[2].Position[3]=-AXIS_TEST_MOTION;
-
-  myPoints[3].Position[1]=0;
-  myPoints[3].Position[2]=-AXIS_TEST_MOTION;
-  myPoints[3].Position[3]=0;
-
-  myPoints[4].Position[1]=-AXIS_TEST_MOTION;
-  myPoints[4].Position[2]=AXIS_TEST_MOTION;
-  myPoints[4].Position[3]=-AXIS_TEST_MOTION;
-
-  myPoints[5].Position[1]=0;
-  myPoints[5].Position[2]=-AXIS_TEST_MOTION;
-  myPoints[5].Position[3]=AXIS_TEST_MOTION;
-
-  myPoints[6].Position[1]=-AXIS_TEST_MOTION;
-  myPoints[6].Position[2]=AXIS_TEST_MOTION;
-  myPoints[6].Position[3]=0;
-
-  myPoints[7].Position[1]=AXIS_TEST_MOTION;
-  myPoints[7].Position[2]=-AXIS_TEST_MOTION;
-  myPoints[7].Position[3]=AXIS_TEST_MOTION;
-
-  myPoints[8].Position[1]=-AXIS_TEST_MOTION;
-  myPoints[8].Position[2]=AXIS_TEST_MOTION;
-  myPoints[8].Position[3]=-AXIS_TEST_MOTION;
-
+  myPointsPosition[ACTIVITY_TEACHPOINT8][AXIS1]=32101;
+  myPointsPosition[ACTIVITY_TEACHPOINT8][AXIS2]=31415;
+  myPointsPosition[ACTIVITY_TEACHPOINT8][AXIS3]=66666;
+  
+  myPointsPosition[ACTIVITY_TEACHPOINT9][AXIS1]=12345;
+  myPointsPosition[ACTIVITY_TEACHPOINT9][AXIS2]=67890;
+  myPointsPosition[ACTIVITY_TEACHPOINT9][AXIS3]=98765;
+  */
+  ///*
   for (int i=0;i<=MAX_POINTS-1;i++){
-    myPoints[1].Speed[AXIS1]=AXIS_TEST_SPEED;
-    myPoints[2].Speed[AXIS2]=AXIS_TEST_SPEED;
-    myPoints[3].Speed[AXIS3]=AXIS_TEST_SPEED;
+    myPointsPosition[i][AXIS1]=i;
+    myPointsSpeed[i][AXIS1]=AXIS_TEST_SPEED;
+    myPointsSpeed[i][AXIS2]=AXIS_TEST_SPEED;
+    myPointsSpeed[i][AXIS3]=AXIS_TEST_SPEED;
   }
+  //*/
 }
 
 task main() {
