@@ -1,6 +1,9 @@
 /*
 Changelog
 
+20130814
+  + (15:15) Added homing procedure, can be initiated/cancelled from orange center button
+
 20130813
   + (16:37) Modified point data structure to contain
 
@@ -33,6 +36,18 @@ Changelog
 #define AXIS3_P 45
 #define AXIS3_I 45
 #define AXIS3_D 45
+
+#define AXIS1_APPROACH_HOME_SPEED 40
+#define AXIS1_AFTER_HOME_SPEED 80
+#define AXIS1_AFTER_HOME_POSITION 1000
+
+#define AXIS2_APPROACH_HOME_SPEED 15
+#define AXIS2_AFTER_HOME_SPEED 50
+#define AXIS2_AFTER_HOME_POSITION 300
+
+#define AXIS3_APPROACH_HOME_SPEED 25
+#define AXIS3_AFTER_HOME_SPEED 30
+#define AXIS3_AFTER_HOME_POSITION 250
 
 #define MAX_AXES 3
 
@@ -98,7 +113,12 @@ long myPointsSpeed[MAX_POINTS][MAX_AXES];
 long myPointsPosition[MAX_POINTS][MAX_AXES];
 
 //Point tempPoint;
-int myActivePoint,myActivity,myActivityType,myHomingAxis;
+int myActivePoint,myActivity,myActivityType;
+
+//For homing
+int myHomingAxis;
+bool myInitHoming,myResetHoming,myHomingActive;
+bool myInitMotionAfterHoming;
 
 long myTachoCounts[MAX_AXES];
 int myActualMotorSpeed[MAX_AXES];
@@ -190,6 +210,7 @@ task INPUT()  {
   bool myButtonCondition,wRE_ButtonPressed[3],wL_ButtonPressed[3],wRE_Touch,wL_Touch,iE_Touch;
   wRE_Touch=false;wL_Touch=false;
   while(true) {
+    //myDebugString1=NumToStr(myActivityType);
     myTachoCounts[AXIS1]=MotorTachoCount(OUT_A);
     myTachoCounts[AXIS2]=MotorTachoCount(OUT_B);
     myTachoCounts[AXIS3]=MotorTachoCount(OUT_C);
@@ -200,12 +221,22 @@ task INPUT()  {
     iE_Touch=(Sensor(IN_1)==1);
     wRE_Touch=(iE_Touch && !wL_Touch);
     wL_Touch=iE_Touch;
-    if(wRE_Touch) {
+    if(wRE_Touch && myActivityType==ACTIVITY_TYPE_TEACH_POINT) {
       for(i=AXIS1;i<MAX_AXES;i++) {
       myPointsPosition[myActivePoint][i]=myTachoCounts[i];
       }
       PlayFileEx("! Backup.rso", 3, false);Wait(MS_500);}
-
+    if(wRE_Touch && myHomingActive && myActivityType==ACTIVITY_TYPE_HOME_AXIS) {
+      PlayFileEx("Good.rso", 3, false);Wait(MS_500);
+      myHomingActive=false;
+      //Reset encoder axis
+      switch(myHomingAxis)
+      {case AXIS1:ResetAllTachoCounts(OUT_A);break;
+       case AXIS2:ResetAllTachoCounts(OUT_B);break;
+       case AXIS3:ResetAllTachoCounts(OUT_C);break;
+      }
+      myInitMotionAfterHoming=true;
+      }
     for(i=0;i<3;i++) {
         switch(i)
               {
@@ -216,8 +247,8 @@ task INPUT()  {
 
             wRE_ButtonPressed[i]=(myButtonCondition && !wL_ButtonPressed[i]);
             wL_ButtonPressed[i]=myButtonCondition;
-            if (wRE_ButtonPressed[i] && i==0 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive) {myActivity=(myActivity+1) % MAX_ACTIVITIES;myRequestSingleMotionCommand=false;}
-            if (wRE_ButtonPressed[i] && i==1 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive) {myActivity=myActivity-1;if (myActivity<0) myActivity=MAX_ACTIVITIES-1;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && i==0 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive) {myActivity=(myActivity+1) % MAX_ACTIVITIES;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && i==1 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive) {myActivity=myActivity-1;if (myActivity<0) myActivity=MAX_ACTIVITIES-1;myRequestSingleMotionCommand=false;}
             if (wRE_ButtonPressed[i] && i==2)
               {
                 switch(myActivityType)
@@ -230,6 +261,9 @@ task INPUT()  {
                       break;
                     case ACTIVITY_TYPE_COMPLEX_1:
                       myProgramActive=!myProgramActive;if (myProgramActive) {myInitProgram=true;}
+                      break;
+                    case ACTIVITY_TYPE_HOME_AXIS:
+                      myHomingActive=!myHomingActive;if (myHomingActive) {myInitHoming=true;} else {myResetHoming=true;}
                       break;
                     case ACTIVITY_TYPE_SAVE_POINTS:
                       if (fnc_SavePoints()) {PlayFileEx("Good.rso", 3, false);}
@@ -478,6 +512,21 @@ task MOTION_AXIS1()
   i=AXIS1_I;
   d=AXIS1_D;
   while(true) {
+    if (myInitHoming && myHomingAxis==me) {
+       myInitHoming=false;
+       OnRev(OUT_A, AXIS1_APPROACH_HOME_SPEED);
+    }
+    if (myResetHoming && myHomingAxis==me && myHomingActive) {
+       myResetHoming=false;
+       Off(OUT_A);
+    }
+    if (myInitMotionAfterHoming && myHomingAxis==me) {
+       myInitMotionAfterHoming=false;
+       myMotionInitiated[me]=true;
+       myMotionStandstill[me]=false;
+       myMotionActive[me]=false;
+       RotateMotorPID(OUT_A, AXIS1_AFTER_HOME_SPEED, AXIS1_AFTER_HOME_POSITION,p,i,d);
+    }
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
       diff=myTachoCounts[me]-myPointsPosition[myActivePoint][me];
@@ -504,6 +553,21 @@ task MOTION_AXIS2()
   i=AXIS2_I;
   d=AXIS2_D;
   while(true) {
+    if (myInitHoming && myHomingAxis==me) {
+       myInitHoming=false;
+       OnFwd(OUT_B, AXIS2_APPROACH_HOME_SPEED);
+    }
+    if (myResetHoming && myHomingAxis==me && myHomingActive) {
+       myResetHoming=false;
+       Off(OUT_B);
+    }
+    if (myInitMotionAfterHoming && myHomingAxis==me) {
+       myInitMotionAfterHoming=false;
+       myMotionInitiated[me]=true;
+       myMotionStandstill[me]=false;
+       myMotionActive[me]=false;
+       RotateMotorPID(OUT_B, (-1)*AXIS2_AFTER_HOME_SPEED, AXIS2_AFTER_HOME_POSITION,p,i,d);
+    }
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
       diff=myTachoCounts[me]-myPointsPosition[myActivePoint][me];
@@ -530,6 +594,21 @@ task MOTION_AXIS3()
   i=AXIS3_I;
   d=AXIS3_D;
   while(true) {
+    if (myInitHoming && myHomingAxis==me) {
+       myInitHoming=false;
+       OnFwd(OUT_C, AXIS3_APPROACH_HOME_SPEED);
+    }
+    if (myResetHoming && myHomingAxis==me && myHomingActive) {
+       myResetHoming=false;
+       Off(OUT_C);
+    }
+    if (myInitMotionAfterHoming && myHomingAxis==me) {
+       myInitMotionAfterHoming=false;
+       myMotionInitiated[me]=true;
+       myMotionStandstill[me]=false;
+       myMotionActive[me]=false;
+       RotateMotorPID(OUT_C, (-1)*AXIS3_AFTER_HOME_SPEED, AXIS3_AFTER_HOME_POSITION,p,i,d);
+    }
     if (myMotionCommandOn[me]) {
       myMotionCommandOn[me]=false;
       diff=myTachoCounts[me]-myPointsPosition[myActivePoint][me];
@@ -548,7 +627,8 @@ task MOTION_AXIS3()
 
 void init() {
   myDebugString1="Debug string 1.";
-  if (fnc_LoadPoints()) {PlayFileEx("Good.rso", 3, false);}
+  if (fnc_LoadPoints()) {;//PlayFileEx("Good.rso", 3, false);
+                         }
   else                  {PlayFileEx("Error.rso", 3, false);}
   
   myMotionCommandOn[AXIS1]=false;
@@ -567,6 +647,7 @@ void init() {
   myActivityType=ACTIVITY_TEACHPOINT1;
   myRequestSingleMotionCommand=false;
   myInitItinerary=false;myItineraryActive=false;myInitProgram=false;
+  myInitHoming=false;myHomingActive=false;myInitMotionAfterHoming=false;myResetHoming=false;
 
   SetSensorTouch(IN_1);
   SetSensorUltrasonic(IN_2);
