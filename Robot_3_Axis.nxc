@@ -1,6 +1,9 @@
 /*
 Changelog
 
+20130816
+  + (13:26) Added saving points procedure, travelling to home position after startup, release axes feature
+  
 20130814
   + (15:15) Added homing procedure, can be initiated/cancelled from orange center button
 
@@ -77,13 +80,17 @@ Changelog
 #define ACTIVITY_HOME_AXIS1   12
 #define ACTIVITY_HOME_AXIS2   13
 #define ACTIVITY_HOME_AXIS3   14
-#define MAX_ACTIVITIES        15
+#define ACTIVITY_RELEASE_AXES 15
+#define ACTIVITY_EXIT_PROG    16
+#define MAX_ACTIVITIES        17
 
 #define ACTIVITY_TYPE_TEACH_POINT      0
 #define ACTIVITY_TYPE_POINT_TO_POINT   1
 #define ACTIVITY_TYPE_COMPLEX_1        2
 #define ACTIVITY_TYPE_SAVE_POINTS      3
 #define ACTIVITY_TYPE_HOME_AXIS        4
+#define ACTIVITY_TYPE_RELEASE_AXES     5
+#define ACTIVITY_TYPE_EXIT_PROG        6
 
 #define POSITION_REACHED_THRESHOLD 50
 
@@ -100,6 +107,7 @@ Changelog
 #define DROP_2           8
 
 #define POINTS_FILENAME "Points.txt"
+#define POSITION_FILENAME "Position.txt"
 
 struct Point
   {
@@ -131,7 +139,44 @@ int myUltrasonicDist;
 int myProgramState;
 
 bool myRequestSingleMotionCommand,myItineraryActive,myInitItinerary,myProgramActive,myInitProgram;
-string tempstr,myDebugString1;
+string tempstr;
+
+//Debug variables
+string myDebugString1;
+long myDebugLong1;
+
+bool fnc_LoadPosition()
+{
+  ClearScreen();
+  string s="Travel to home";
+  TextOut(0, LCD_LINE4,s);
+  byte fileHandle;
+  short fileSize;
+  unsigned int result;
+  result=OpenFileRead(POSITION_FILENAME, fileSize, fileHandle);
+  if (result==LDR_SUCCESS)
+  {
+    long value[MAX_AXES];
+    long val;
+    Read(fileHandle,val);
+    value[AXIS1]=val;
+    //myDebugString1=NumToStr(value);
+    Read(fileHandle,val);
+    value[AXIS2]=val;
+    Read(fileHandle,val);
+    value[AXIS3]=val;
+    RotateMotorPID(OUT_B, 50, (-1)*value[AXIS2],AXIS2_P,AXIS2_I,AXIS2_D);
+    RotateMotorPID(OUT_C, 50, (-1)*value[AXIS3],AXIS3_P,AXIS3_I,AXIS3_D);
+    RotateMotorPID(OUT_A, 50, (-1)*value[AXIS1],AXIS1_P,AXIS1_I,AXIS1_D);
+    ResetAllTachoCounts(OUT_ABC);
+    CloseFile(fileHandle);
+    return true;
+  }
+  else
+  {
+  return false;
+  }
+}
 
 bool fnc_LoadPoints()
 {
@@ -159,6 +204,34 @@ bool fnc_LoadPoints()
     tmp=SubStr(line, 26, 3);
     myPointsSpeed[i][AXIS3]=StrToNum(tmp);
   }
+  CloseFile(fileHandle);
+  return true;
+  }
+  else
+  {
+  return false;
+  }
+}
+
+bool fnc_SavePosition(const long Axis1,const long Axis2, const long Axis3)
+{
+  byte fileHandle;
+  short fileSize = 512;
+  short bytesWritten;
+  string write,tmp;
+  unsigned int result;
+  DeleteFile(POSITION_FILENAME);
+  result=CreateFile(POSITION_FILENAME, fileSize, fileHandle);
+  if (result==LDR_SUCCESS)
+  {
+  //for(int i=AXIS1; i<MAX_AXES; i++ )
+  //  {
+      //Write(fileHandle,myTachoCounts[i]);
+      Write(fileHandle,Axis1);
+      Write(fileHandle,Axis2);
+      Write(fileHandle,Axis3);
+      //myDebugLong1=myDebugLong1+bytesWritten;
+   // }
   CloseFile(fileHandle);
   return true;
   }
@@ -269,6 +342,15 @@ task INPUT()  {
                       if (fnc_SavePoints()) {PlayFileEx("Good.rso", 3, false);}
                       else                 { PlayFileEx("Error.rso", 3, false);}
                       break;
+                    case ACTIVITY_TYPE_RELEASE_AXES:
+                      Coast(OUT_ABC);
+                      PlayFileEx("Good.rso", 3, false);
+                      break;
+                    case ACTIVITY_TYPE_EXIT_PROG:
+                      if (fnc_SavePosition(myTachoCounts[AXIS1],myTachoCounts[AXIS2],myTachoCounts[AXIS3]))
+                                           {PlayFileEx("Good.rso", 3, false);Wait(SEC_2);StopAllTasks();}
+                      else                 {PlayFileEx("Error.rso", 3, false);}
+                      break;
                   }
               }
           }
@@ -376,6 +458,16 @@ task HMI()
               s=strcat(s,NumToStr(myHomingAxis+1));
               TextOut(0, LCD_LINE5,s);
               break;
+            case ACTIVITY_TYPE_EXIT_PROG:
+              s="Exit program";
+              TextOut(0, LCD_LINE4,s);
+              s="Save position";
+              TextOut(0, LCD_LINE5,s);
+              break;
+            case ACTIVITY_TYPE_RELEASE_AXES:
+              s="Release axes";
+              TextOut(0, LCD_LINE4,s);
+              break;
           }
     //FontTextOut( 0,60, "PropTiny.RIC", "Now is the winter of our discontent made glorious summer by this son of York.  And all the clouds that lowered upon our house in the deep bosom of the ocean buried.", DRAW_OPT_NORMAL|DRAW_OPT_FONT_DIR_L2RB|DRAW_OPT_FONT_WRAP );
     if (HMI_DEBUG_STRING1) {s=myDebugString1;TextOut(0, LCD_LINE8,s);}
@@ -470,6 +562,15 @@ task CONTROL()
         myHomingAxis=myActivity-ACTIVITY_HOME_AXIS1;
         myActivityType=ACTIVITY_TYPE_HOME_AXIS;
       }
+    if (myActivity==ACTIVITY_EXIT_PROG)
+      {
+        myActivityType=ACTIVITY_TYPE_EXIT_PROG;
+      }
+    if (myActivity==ACTIVITY_RELEASE_AXES)
+      {
+        myActivityType=ACTIVITY_TYPE_RELEASE_AXES;
+      }
+
     if (myActivity==ACTIVITY_COMPLEX)
       {
         myActivityType=ACTIVITY_TYPE_COMPLEX_1;
@@ -630,7 +731,10 @@ void init() {
   if (fnc_LoadPoints()) {;//PlayFileEx("Good.rso", 3, false);
                          }
   else                  {PlayFileEx("Error.rso", 3, false);}
-  
+  if (fnc_LoadPosition()) {;PlayFileEx("Good.rso", 3, false);
+                         }
+  else                  {PlayFileEx("Error.rso", 3, false);}
+
   myMotionCommandOn[AXIS1]=false;
   myMotionCommandOn[AXIS2]=false;
   myMotionCommandOn[AXIS3]=false;
