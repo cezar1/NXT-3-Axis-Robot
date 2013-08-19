@@ -1,6 +1,10 @@
 /*
 Changelog
 
+20130819
+  + (12:44) Modified complex procedure not to pass through home position
+  + (12:45) Encountered issues due to axis 1 backlash, should be compensated by adjusting points positions between each other
+  
 20130816
   + (13:26) Added saving points procedure, travelling to home position after startup, release axes feature
   
@@ -577,7 +581,8 @@ task CONTROL()
         if (myProgramActive && myInitProgram)
           {
             myInitProgram=false;
-            myActivePoint=ACTIVITY_TEACHPOINT1;
+            myActivePoint=ACTIVITY_TEACHPOINT2;
+            myProgramState=BEFORE_PICK_UP;
             myRequestSingleMotionCommand=true;
           }
         if (myProgramActive && !myRequestSingleMotionCommand && myGlobalPositionSetpointAvailable)
@@ -588,14 +593,14 @@ task CONTROL()
                   case CHECK_PICK_UP_1:   Wait(SEC_2);if(myUltrasonicDist<ULTRASONIC_THRESHOLD)
                                           {myActivePoint=PREP1_PICK_UP_1;myRequestSingleMotionCommand=true;myProgramState=PREP1_PICK_UP_1;}
                                           else
-                                          {myActivePoint=IN_HOME_POSITION;myRequestSingleMotionCommand=true;myProgramState=IN_HOME_POSITION;}
+                                          {myActivePoint=BEFORE_PICK_UP;myRequestSingleMotionCommand=true;myProgramState=BEFORE_PICK_UP;}
                                           break;
                   case PREP1_PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
                   case PREP2_PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
                   case PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
                   case TRANSPORT:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
                   case DROP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
-                  case DROP_2:myActivePoint=IN_HOME_POSITION;myProgramState=IN_HOME_POSITION;myRequestSingleMotionCommand=true;break;
+                  case DROP_2:myActivePoint=BEFORE_PICK_UP;myProgramState=BEFORE_PICK_UP;myRequestSingleMotionCommand=true;break;
                 }
           }
        }
