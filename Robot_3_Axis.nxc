@@ -1,6 +1,14 @@
 /*
 Changelog
 
+TODO
+  + Increase number of poits
+  + Add function for point name
+  + Avoid going to zero in complex procedure
+  + Define initial retract position for axis 3 to prevent collisions when going to home
+
+20130820
+
 20130819
   + (12:44) Modified complex procedure not to pass through home position
   + (12:45) Encountered issues due to axis 1 backlash, should be compensated by adjusting points positions between each other
@@ -66,27 +74,39 @@ Changelog
 #define AXIS_STANDSTILL_VELOCITY_THRESHOLD 2
 #define AXIS_STANDSTILL_VELOCITY_HYSTERESIS 1
 
-#define MAX_POINTS 9
+#define MAX_POINTS 20
 
 
-#define ACTIVITY_TEACHPOINT1  0
-#define ACTIVITY_TEACHPOINT2  1
-#define ACTIVITY_TEACHPOINT3  2
-#define ACTIVITY_TEACHPOINT4  3
-#define ACTIVITY_TEACHPOINT5  4
-#define ACTIVITY_TEACHPOINT6  5
-#define ACTIVITY_TEACHPOINT7  6
-#define ACTIVITY_TEACHPOINT8  7
-#define ACTIVITY_TEACHPOINT9  8
-#define ACTIVITY_PP_P1_P9     9
-#define ACTIVITY_COMPLEX      10
-#define ACTIVITY_SAVE_POINTS  11
-#define ACTIVITY_HOME_AXIS1   12
-#define ACTIVITY_HOME_AXIS2   13
-#define ACTIVITY_HOME_AXIS3   14
-#define ACTIVITY_RELEASE_AXES 15
-#define ACTIVITY_EXIT_PROG    16
-#define MAX_ACTIVITIES        17
+#define ACTIVITY_TEACHPOINT1   0
+#define ACTIVITY_TEACHPOINT2   1
+#define ACTIVITY_TEACHPOINT3   2
+#define ACTIVITY_TEACHPOINT4   3
+#define ACTIVITY_TEACHPOINT5   4
+#define ACTIVITY_TEACHPOINT6   5
+#define ACTIVITY_TEACHPOINT7   6
+#define ACTIVITY_TEACHPOINT8   7
+#define ACTIVITY_TEACHPOINT9   8
+#define ACTIVITY_TEACHPOINT10  9
+#define ACTIVITY_TEACHPOINT11  10
+#define ACTIVITY_TEACHPOINT12  11
+#define ACTIVITY_TEACHPOINT13  12
+#define ACTIVITY_TEACHPOINT14  13
+#define ACTIVITY_TEACHPOINT15  14
+#define ACTIVITY_TEACHPOINT16  15
+#define ACTIVITY_TEACHPOINT17  16
+#define ACTIVITY_TEACHPOINT18  17
+#define ACTIVITY_TEACHPOINT19  18
+#define ACTIVITY_TEACHPOINT20  19
+
+#define ACTIVITY_PP           20
+#define ACTIVITY_COMPLEX      21
+#define ACTIVITY_SAVE_POINTS  22
+#define ACTIVITY_HOME_AXIS1   23
+#define ACTIVITY_HOME_AXIS2   24
+#define ACTIVITY_HOME_AXIS3   25
+#define ACTIVITY_RELEASE_AXES 26
+#define ACTIVITY_EXIT_PROG    27
+#define MAX_ACTIVITIES        28
 
 #define ACTIVITY_TYPE_TEACH_POINT      0
 #define ACTIVITY_TYPE_POINT_TO_POINT   1
@@ -245,10 +265,37 @@ bool fnc_SavePosition(const long Axis1,const long Axis2, const long Axis3)
   }
 }
 
+string fnc_MakePointName(int vPoint)
+{
+  switch(vPoint)
+      {case ACTIVITY_TEACHPOINT1 :return "Home";break;
+       case ACTIVITY_TEACHPOINT2 :return "Before pick 1";break;
+       case ACTIVITY_TEACHPOINT3 :return "Before pick 2";break;
+       case ACTIVITY_TEACHPOINT4 :return "Before pick 3";break;
+       case ACTIVITY_TEACHPOINT5 :return "Check pick 1";break;
+       case ACTIVITY_TEACHPOINT6 :return "Check pick 2";break;
+       case ACTIVITY_TEACHPOINT7 :return "Check pick 3";break;
+       case ACTIVITY_TEACHPOINT8 :return "Return before 1";break;
+       case ACTIVITY_TEACHPOINT9 :return "Return before 2";break;
+       case ACTIVITY_TEACHPOINT10:return "Prep pick 1";break;
+       case ACTIVITY_TEACHPOINT11:return "Prep pick 2";break;
+       case ACTIVITY_TEACHPOINT12:return "Prep pick 3";break;
+       case ACTIVITY_TEACHPOINT13:return "Pick 1";break;
+       case ACTIVITY_TEACHPOINT14:return "Pick 2";break;
+       case ACTIVITY_TEACHPOINT15:return "Pick 3";break;
+       case ACTIVITY_TEACHPOINT16:return "Transport 1";break;
+       case ACTIVITY_TEACHPOINT17:return "Transport 2";break;
+       case ACTIVITY_TEACHPOINT18:return "Drop 1";break;
+       case ACTIVITY_TEACHPOINT19:return "Drop 2";break;
+       case ACTIVITY_TEACHPOINT20:return "Drop 3";break;
+       default:return "Undefined";break;
+      }
+}
+
 bool fnc_SavePoints()
 {
   byte fileHandle;
-  short fileSize = 512;
+  short fileSize = 1024;
   short bytesWritten;
   string write,tmp;
   unsigned int result;
@@ -326,6 +373,7 @@ task INPUT()  {
             wL_ButtonPressed[i]=myButtonCondition;
             if (wRE_ButtonPressed[i] && i==0 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive) {myActivity=(myActivity+1) % MAX_ACTIVITIES;myRequestSingleMotionCommand=false;}
             if (wRE_ButtonPressed[i] && i==1 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive) {myActivity=myActivity-1;if (myActivity<0) myActivity=MAX_ACTIVITIES-1;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && (i==0 || i==1) && myActivity==ACTIVITY_PP) {myActivePoint=ACTIVITY_TEACHPOINT1;}
             if (wRE_ButtonPressed[i] && i==2)
               {
                 switch(myActivityType)
@@ -392,8 +440,10 @@ task HMI()
     switch(myActivityType)
           {
             case ACTIVITY_TYPE_TEACH_POINT:
-              s="Display point:P";
+              s="P";
               s=strcat(s,NumToStr(myActivePoint));
+              s=strcat(s,":");
+              s=strcat(s,fnc_MakePointName(myActivePoint));
               TextOut(0, LCD_LINE4,s);
               for(i=1;i<=MAX_AXES;i++)
               {
@@ -531,7 +581,7 @@ task CONTROL()
 
       }
 
-    if (myActivity>=ACTIVITY_TEACHPOINT1 && myActivity<=ACTIVITY_TEACHPOINT9)
+    if (myActivity>=ACTIVITY_TEACHPOINT1 && myActivity<=MAX_POINTS-1)
       {
             myActivityType=ACTIVITY_TYPE_TEACH_POINT;
             myActivePoint=myActivity;
@@ -540,7 +590,7 @@ task CONTROL()
         if (myActivity==ACTIVITY_COMPLEX) myActivityType=ACTIVITY_TYPE_COMPLEX_1;
 
 
-    if (myActivity==ACTIVITY_PP_P1_P9)
+    if (myActivity==ACTIVITY_PP)
       {
         myActivityType=ACTIVITY_TYPE_POINT_TO_POINT;
         if (myInitItinerary && myGlobalPositionSetpointAvailable)
