@@ -1,14 +1,15 @@
 /*
 Changelog
 
-TODO
-  + Increase number of poits
-  + Add function for point name
-  + Avoid going to zero in complex procedure
-  + Define initial retract position for axis 3 to prevent collisions when going to home
+20130828
+  + (15:40) Added define initial retract position for axis 3 to prevent collisions when going to home
+  + (15:40) Modified homing procedure to prevent triggering of myGlobalPositionSetpoint
+  + (15:40) Added procedure for cancelling initial travel to home position
 
 20130820
-
+  + (??:??) 20 maximum points
+  + (??:??) Added function for point name
+  
 20130819
   + (12:44) Modified complex procedure not to pass through home position
   + (12:45) Encountered issues due to axis 1 backlash, should be compensated by adjusting points positions between each other
@@ -35,6 +36,8 @@ TODO
   + (23:59) Added fnc_LoadPoints and fnc_SavePoints. Integrated fnc_SavePoints into logic
 */
 #define HMI_DEBUG_STRING1 0 //If true will always display contents of myDebugString1 on line 8
+
+#define INITIAL_RETRACT_POS_A3 400
 
 #define AXIS1 0
 #define AXIS2 1
@@ -64,6 +67,7 @@ TODO
 #define AXIS3_AFTER_HOME_SPEED 30
 #define AXIS3_AFTER_HOME_POSITION 250
 
+#define SPEED_MOD_INC 5
 #define MAX_AXES 3
 
 #define AXIS_POWER 50
@@ -163,6 +167,8 @@ int myUltrasonicDist;
 int myProgramState;
 
 bool myRequestSingleMotionCommand,myItineraryActive,myInitItinerary,myProgramActive,myInitProgram;
+bool myPointHasBeenSelected,mySpeedModifyOn,myBlinkVar;
+int myActiveAxisForSpeedModify;
 string tempstr;
 
 //Debug variables
@@ -171,14 +177,21 @@ long myDebugLong1;
 
 bool fnc_LoadPosition()
 {
+  bool CancelTravel;
   ClearScreen();
-  string s="Travel to home";
+  string s="Wait for cancel home";
+  TextOut(0, LCD_LINE4,s);
+  Wait(SEC_5);
+  CancelTravel=(Sensor(IN_1)==1);
+  ClearScreen();
+  if (CancelTravel) s="Cancelled";
+  else s="Travel to home";
   TextOut(0, LCD_LINE4,s);
   byte fileHandle;
   short fileSize;
   unsigned int result;
   result=OpenFileRead(POSITION_FILENAME, fileSize, fileHandle);
-  if (result==LDR_SUCCESS)
+  if (result==LDR_SUCCESS && !CancelTravel)
   {
     long value[MAX_AXES];
     long val;
@@ -189,15 +202,20 @@ bool fnc_LoadPosition()
     value[AXIS2]=val;
     Read(fileHandle,val);
     value[AXIS3]=val;
+    
+    //Initial fixed position of axis 3 from motion
+    RotateMotorPID(OUT_C, 50, (-1)*value[AXIS3]+INITIAL_RETRACT_POS_A3,AXIS3_P,AXIS3_I,AXIS3_D);
     RotateMotorPID(OUT_B, 50, (-1)*value[AXIS2],AXIS2_P,AXIS2_I,AXIS2_D);
-    RotateMotorPID(OUT_C, 50, (-1)*value[AXIS3],AXIS3_P,AXIS3_I,AXIS3_D);
     RotateMotorPID(OUT_A, 50, (-1)*value[AXIS1],AXIS1_P,AXIS1_I,AXIS1_D);
+    //Move to home position from retracted offset
+    RotateMotorPID(OUT_C, 50, (-1)*INITIAL_RETRACT_POS_A3,AXIS3_P,AXIS3_I,AXIS3_D);
     ResetAllTachoCounts(OUT_ABC);
     CloseFile(fileHandle);
     return true;
   }
   else
   {
+  CloseFile(fileHandle);
   return false;
   }
 }
@@ -334,7 +352,7 @@ task INPUT()  {
   bool myButtonCondition,wRE_ButtonPressed[3],wL_ButtonPressed[3],wRE_Touch,wL_Touch,iE_Touch;
   wRE_Touch=false;wL_Touch=false;
   while(true) {
-    //myDebugString1=NumToStr(myActivityType);
+    myDebugString1=NumToStr(myActiveAxisForSpeedModify);
     myTachoCounts[AXIS1]=MotorTachoCount(OUT_A);
     myTachoCounts[AXIS2]=MotorTachoCount(OUT_B);
     myTachoCounts[AXIS3]=MotorTachoCount(OUT_C);
@@ -346,9 +364,13 @@ task INPUT()  {
     wRE_Touch=(iE_Touch && !wL_Touch);
     wL_Touch=iE_Touch;
     if(wRE_Touch && myActivityType==ACTIVITY_TYPE_TEACH_POINT) {
-      for(i=AXIS1;i<MAX_AXES;i++) {
-      myPointsPosition[myActivePoint][i]=myTachoCounts[i];
-      }
+      if (mySpeedModifyOn && myPointHasBeenSelected) {myActiveAxisForSpeedModify=myActiveAxisForSpeedModify+1;}
+      if (myPointHasBeenSelected && !mySpeedModifyOn) {mySpeedModifyOn=true;}
+      if (!myPointHasBeenSelected) {myPointHasBeenSelected=true;myActiveAxisForSpeedModify=AXIS1;}
+      if (myActiveAxisForSpeedModify==MAX_AXES) {mySpeedModifyOn=false;myPointHasBeenSelected=false;}
+      /*
+
+      }*/
       PlayFileEx("! Backup.rso", 3, false);Wait(MS_500);}
     if(wRE_Touch && myHomingActive && myActivityType==ACTIVITY_TYPE_HOME_AXIS) {
       PlayFileEx("Good.rso", 3, false);Wait(MS_500);
@@ -371,15 +393,25 @@ task INPUT()  {
 
             wRE_ButtonPressed[i]=(myButtonCondition && !wL_ButtonPressed[i]);
             wL_ButtonPressed[i]=myButtonCondition;
-            if (wRE_ButtonPressed[i] && i==0 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive) {myActivity=(myActivity+1) % MAX_ACTIVITIES;myRequestSingleMotionCommand=false;}
-            if (wRE_ButtonPressed[i] && i==1 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive) {myActivity=myActivity-1;if (myActivity<0) myActivity=MAX_ACTIVITIES-1;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && i==0 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive && !myPointHasBeenSelected) {myActivity=(myActivity+1) % MAX_ACTIVITIES;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && i==1 && myGlobalPositionSetpointAvailable && !myItineraryActive && !myProgramActive && !myHomingActive && !myPointHasBeenSelected) {myActivity=myActivity-1;if (myActivity<0) myActivity=MAX_ACTIVITIES-1;myRequestSingleMotionCommand=false;}
+            if (wRE_ButtonPressed[i] && i==0 && myActivityType==ACTIVITY_TYPE_TEACH_POINT && mySpeedModifyOn)
+              {myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]=myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]+SPEED_MOD_INC;}
+            if (wRE_ButtonPressed[i] && i==1 && myActivityType==ACTIVITY_TYPE_TEACH_POINT && mySpeedModifyOn)
+              {myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]=myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]-SPEED_MOD_INC;}
             if (wRE_ButtonPressed[i] && (i==0 || i==1) && myActivity==ACTIVITY_PP) {myActivePoint=ACTIVITY_TEACHPOINT1;}
             if (wRE_ButtonPressed[i] && i==2)
               {
                 switch(myActivityType)
                   {
                     case ACTIVITY_TYPE_TEACH_POINT:
-                      if (myGlobalPositionSetpointAvailable) myRequestSingleMotionCommand=true;
+                      if (myGlobalPositionSetpointAvailable && !myPointHasBeenSelected) myRequestSingleMotionCommand=true;
+                      else if (myPointHasBeenSelected && !mySpeedModifyOn) {
+                           //Teach point
+                           for(i=AXIS1;i<MAX_AXES;i++) {myPointsPosition[myActivePoint][i]=myTachoCounts[i];}
+                           PlayFileEx("Good.rso", 3, false);
+                           myPointHasBeenSelected=false;
+                           }
                       break;
                     case ACTIVITY_TYPE_POINT_TO_POINT:
                       if (myGlobalPositionSetpointAvailable && !myItineraryActive) {myInitItinerary=true;}
@@ -395,7 +427,7 @@ task INPUT()  {
                       else                 { PlayFileEx("Error.rso", 3, false);}
                       break;
                     case ACTIVITY_TYPE_RELEASE_AXES:
-                      Coast(OUT_ABC);
+                      CoastEx(OUT_ABC, RESET_NONE);
                       PlayFileEx("Good.rso", 3, false);
                       break;
                     case ACTIVITY_TYPE_EXIT_PROG:
@@ -418,6 +450,7 @@ task HMI()
   Point tmp;
   while (true) {
     ClearScreen();
+    myBlinkVar=!myBlinkVar;
     s="A1:";
     s=strcat(s,FormatNum("%05d,", myTachoCounts[AXIS1]));
     s=strcat(s,FormatNum("%03d,",myActualMotorSpeed[AXIS1]));
@@ -445,16 +478,33 @@ task HMI()
               s=strcat(s,":");
               s=strcat(s,fnc_MakePointName(myActivePoint));
               TextOut(0, LCD_LINE4,s);
-              for(i=1;i<=MAX_AXES;i++)
+              if (myBlinkVar || !myPointHasBeenSelected)
               {
-               s="P.A";
-               s=strcat(s,NumToStr(i));
-               s=strcat(s,":");
-               val=myPointsPosition[myActivePoint][i-1];
-               s=strcat(s,FormatNum("%05d,", val));
-               val=myPointsSpeed[myActivePoint][i-1];
-               s=strcat(s,FormatNum("%03d", val));
-               TextOut(0, LCD_LINE5-(i-1)*8,s);
+               for(i=1;i<=MAX_AXES;i++)
+               {
+                s="P.A";
+                s=strcat(s,NumToStr(i));
+                s=strcat(s,":");
+                val=myPointsPosition[myActivePoint][i-1];
+                /*
+                if (myPointHasBeenSelected && !mySpeedModifyOn)
+                  {
+                    if (myBlinkVar) s=strcat(s,FormatNum("%05d,", val));
+                    else s=strcat(s,FormatNum("%05d,", ""));
+                  }
+                else s=strcat(s,FormatNum("%05d,", val));
+                */
+                s=strcat(s,FormatNum("%05d,", val));
+                val=myPointsSpeed[myActivePoint][i-1];
+                //if (myPointHasBeenSelected && mySpeedModifyOn && (i-1)==myActiveAxisForSpeedModify)
+                if (myPointHasBeenSelected && mySpeedModifyOn && i==1)
+                  {
+                    if (myBlinkVar) {s=strcat(s,FormatNum("%03d", val));}
+                    else {s=strcat(s,"aaa");}
+                  }
+                else {s=strcat(s,FormatNum("%03d", val));}
+                TextOut(0, LCD_LINE5-(i-1)*8,s);
+                }
               }
               s="Go point.Teach.";
               TextOut(0, LCD_LINE8,s);
@@ -678,9 +728,6 @@ task MOTION_AXIS1()
     }
     if (myInitMotionAfterHoming && myHomingAxis==me) {
        myInitMotionAfterHoming=false;
-       myMotionInitiated[me]=true;
-       myMotionStandstill[me]=false;
-       myMotionActive[me]=false;
        RotateMotorPID(OUT_A, AXIS1_AFTER_HOME_SPEED, AXIS1_AFTER_HOME_POSITION,p,i,d);
     }
     if (myMotionCommandOn[me]) {
@@ -719,9 +766,6 @@ task MOTION_AXIS2()
     }
     if (myInitMotionAfterHoming && myHomingAxis==me) {
        myInitMotionAfterHoming=false;
-       myMotionInitiated[me]=true;
-       myMotionStandstill[me]=false;
-       myMotionActive[me]=false;
        RotateMotorPID(OUT_B, (-1)*AXIS2_AFTER_HOME_SPEED, AXIS2_AFTER_HOME_POSITION,p,i,d);
     }
     if (myMotionCommandOn[me]) {
@@ -760,9 +804,9 @@ task MOTION_AXIS3()
     }
     if (myInitMotionAfterHoming && myHomingAxis==me) {
        myInitMotionAfterHoming=false;
-       myMotionInitiated[me]=true;
-       myMotionStandstill[me]=false;
-       myMotionActive[me]=false;
+       //myMotionInitiated[me]=true;
+       //myMotionStandstill[me]=false;
+       //myMotionActive[me]=false;
        RotateMotorPID(OUT_C, (-1)*AXIS3_AFTER_HOME_SPEED, AXIS3_AFTER_HOME_POSITION,p,i,d);
     }
     if (myMotionCommandOn[me]) {
@@ -782,6 +826,9 @@ task MOTION_AXIS3()
 }
 
 void init() {
+  SetSensorTouch(IN_1);
+  SetSensorUltrasonic(IN_2);
+  
   myDebugString1="Debug string 1.";
   if (fnc_LoadPoints()) {;//PlayFileEx("Good.rso", 3, false);
                          }
@@ -790,6 +837,8 @@ void init() {
                          }
   else                  {PlayFileEx("Error.rso", 3, false);}
 
+  Wait(SEC_2);
+  
   myMotionCommandOn[AXIS1]=false;
   myMotionCommandOn[AXIS2]=false;
   myMotionCommandOn[AXIS3]=false;
@@ -808,8 +857,7 @@ void init() {
   myInitItinerary=false;myItineraryActive=false;myInitProgram=false;
   myInitHoming=false;myHomingActive=false;myInitMotionAfterHoming=false;myResetHoming=false;
 
-  SetSensorTouch(IN_1);
-  SetSensorUltrasonic(IN_2);
+
 
   /*
   myPointsPosition[ACTIVITY_TEACHPOINT1][AXIS1]=AXIS_TEST_MOTION;
