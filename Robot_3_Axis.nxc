@@ -1,6 +1,9 @@
 /*
 Changelog
 
+20130830
+  + (18:06) Modified complex procedure to use all points
+
 20130828
   + (15:40) Added define initial retract position for axis 3 to prevent collisions when going to home
   + (15:40) Modified homing procedure to prevent triggering of myGlobalPositionSetpoint
@@ -528,25 +531,7 @@ task HMI()
               s="Ultrasonic:";
               s=strcat(s,NumToStr(myUltrasonicDist));
               TextOut(0, LCD_LINE5,s);
-              switch (myProgramState) {
-              case IN_HOME_POSITION:
-                s="Home";break;
-              case BEFORE_PICK_UP:
-                s="Before pick 1";break;
-              case CHECK_PICK_UP_1:
-                s="Check pick 1";break;
-              case PREP1_PICK_UP_1:
-                s="Prep 1 pick";break;
-              case PREP2_PICK_UP_1:
-                s="Prep 2 pick";break;
-              case PICK_UP_1:
-                s="Pick 1";break;
-              case TRANSPORT:
-                s="Transport";break;
-              case DROP_1:
-                s="Drop 1";break;
-              case DROP_2:
-                s="Drop 2";break;    }
+              s=fnc_MakePointName(myActivePoint);
               TextOut(0, LCD_LINE6,s);
               break;
             case ACTIVITY_TYPE_SAVE_POINTS:
@@ -582,6 +567,7 @@ task HMI()
 task CONTROL()
 {
   string s;
+  int myTentativeProgState;
   while(true) {
     //Axis 1 standstill monitoring
     if (myMotionInitiated[AXIS1] && abs(myActualMotorSpeed[AXIS1])>AXIS_STANDSTILL_VELOCITY_THRESHOLD+AXIS_STANDSTILL_VELOCITY_HYSTERESIS)
@@ -608,9 +594,22 @@ task CONTROL()
        myMotionStandstill[AXIS3]=false;
        myMotionStandstill[AXIS1]=false;
        s="0";
-       s=strcat(s,NumToStr(myActivePoint));
-       s=strcat(s,".rso");
-       PlayFileEx(s, 3, false); Wait(MS_500);
+       if (myActivePoint<10)
+       {
+         s=strcat(s,NumToStr(myActivePoint));
+         s=strcat(s,".rso");
+         PlayFileEx(s, 3, false); Wait(MS_500);
+       }
+       else
+       {
+         s=strcat(s,NumToStr(myActivePoint/10));
+         s=strcat(s,".rso");
+         PlayFileEx(s, 3, false); Wait(MS_500);
+         s="0";
+         s=strcat(s,NumToStr(myActivePoint%10));
+         s=strcat(s,".rso");
+         PlayFileEx(s, 3, false); Wait(MS_500);
+       }
       }
 
 
@@ -681,27 +680,30 @@ task CONTROL()
         if (myProgramActive && myInitProgram)
           {
             myInitProgram=false;
-            myActivePoint=ACTIVITY_TEACHPOINT2;
-            myProgramState=BEFORE_PICK_UP;
+            myProgramState=ACTIVITY_TEACHPOINT2;
+            myActivePoint=myProgramState;
             myRequestSingleMotionCommand=true;
           }
         if (myProgramActive && !myRequestSingleMotionCommand && myGlobalPositionSetpointAvailable)
           {
+             myTentativeProgState=myProgramState+1;
              switch (myProgramState)
-                { case IN_HOME_POSITION:  Wait(SEC_2);myActivePoint=BEFORE_PICK_UP;myRequestSingleMotionCommand=true;myProgramState=BEFORE_PICK_UP;break;
-                  case BEFORE_PICK_UP:    myActivePoint=CHECK_PICK_UP_1;myRequestSingleMotionCommand=true;myProgramState=CHECK_PICK_UP_1;break;
-                  case CHECK_PICK_UP_1:   Wait(SEC_2);if(myUltrasonicDist<ULTRASONIC_THRESHOLD)
-                                          {myActivePoint=PREP1_PICK_UP_1;myRequestSingleMotionCommand=true;myProgramState=PREP1_PICK_UP_1;}
-                                          else
-                                          {myActivePoint=BEFORE_PICK_UP;myRequestSingleMotionCommand=true;myProgramState=BEFORE_PICK_UP;}
-                                          break;
-                  case PREP1_PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
-                  case PREP2_PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
-                  case PICK_UP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
-                  case TRANSPORT:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
-                  case DROP_1:myActivePoint++;myProgramState++;myRequestSingleMotionCommand=true;break;
-                  case DROP_2:myActivePoint=BEFORE_PICK_UP;myProgramState=BEFORE_PICK_UP;myRequestSingleMotionCommand=true;break;
+                {
+                  case ACTIVITY_TEACHPOINT7  :
+                    Wait(SEC_2);
+                    if(myUltrasonicDist<ULTRASONIC_THRESHOLD || true ) {myTentativeProgState=ACTIVITY_TEACHPOINT10;}
+                    else {myTentativeProgState=ACTIVITY_TEACHPOINT8;}
+                    break;
+                  case ACTIVITY_TEACHPOINT9:
+                    myTentativeProgState=ACTIVITY_TEACHPOINT2;
+                    break;
+                  case ACTIVITY_TEACHPOINT20:
+                    myTentativeProgState=ACTIVITY_TEACHPOINT2;
+                    break;
                 }
+             myProgramState=myTentativeProgState;
+             myActivePoint=myProgramState;
+             myRequestSingleMotionCommand=true;
           }
        }
 
