@@ -1,5 +1,9 @@
 /*
 Changelog
+- branch optimised motion
+
+20130904
+  + (13:07) Optimised motion commands
 
 20130830
   + (18:06) Modified complex procedure to use all points
