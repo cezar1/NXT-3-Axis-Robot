@@ -2,6 +2,11 @@
 Changelog
 - branch optimised motion
 
+20130909
+  + (13:03) Added POINT_NR_ON_COMPLEX
+  + (??:??) Added global speed ratio modification during complex procedure, with limits
+  + (17:23) Added initialisation of global speed ratio when entering complex procedure
+
 20130904
   + (13:07) Optimised motion commands
 
@@ -46,6 +51,8 @@ Changelog
 
 #define INITIAL_RETRACT_POS_A3 400
 
+#define POINT_NR_ON_COMPLEX 0 //If true robot will output number of point on each new point arrived
+
 #define AXIS1 0
 #define AXIS2 1
 #define AXIS3 2
@@ -75,6 +82,7 @@ Changelog
 #define AXIS3_AFTER_HOME_POSITION 250
 
 #define SPEED_MOD_INC 5
+#define AUTO_SPEED_MOD_INC 20
 #define MAX_AXES 3
 
 #define AXIS_POWER 50
@@ -87,6 +95,12 @@ Changelog
 
 #define MAX_POINTS 20
 
+#define MIN_AUTO_SPEED_MOD 50
+#define MAX_AUTO_SPEED_MOD 200
+#define AUTO_DEFAULT_SPEED 100
+
+#define MIN_POWER 30
+#define MAX_POWER 100
 
 #define ACTIVITY_TEACHPOINT1   0
 #define ACTIVITY_TEACHPOINT2   1
@@ -129,7 +143,7 @@ Changelog
 
 #define POSITION_REACHED_THRESHOLD 50
 
-#define ULTRASONIC_THRESHOLD 20
+#define ULTRASONIC_THRESHOLD 15
 
 #define IN_HOME_POSITION 0
 #define BEFORE_PICK_UP   1
@@ -157,6 +171,8 @@ long myPointsPosition[MAX_POINTS][MAX_AXES];
 
 //Point tempPoint;
 int myActivePoint,myActivity,myActivityType;
+
+int myAutoSpeed;
 
 //For homing
 int myHomingAxis;
@@ -406,6 +422,11 @@ task INPUT()  {
               {myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]=myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]+SPEED_MOD_INC;}
             if (wRE_ButtonPressed[i] && i==1 && myActivityType==ACTIVITY_TYPE_TEACH_POINT && mySpeedModifyOn)
               {myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]=myPointsSpeed[myActivePoint][myActiveAxisForSpeedModify]-SPEED_MOD_INC;}
+            //Speed modify in auto mode
+            if (wRE_ButtonPressed[i] && i==0 && myProgramActive && myAutoSpeed<MAX_AUTO_SPEED_MOD)
+              {myAutoSpeed=myAutoSpeed+AUTO_SPEED_MOD_INC;}
+            if (wRE_ButtonPressed[i] && i==1 && myProgramActive && myAutoSpeed>MIN_AUTO_SPEED_MOD)
+              {myAutoSpeed=myAutoSpeed-AUTO_SPEED_MOD_INC;}
             if (wRE_ButtonPressed[i] && (i==0 || i==1) && myActivity==ACTIVITY_PP) {myActivePoint=ACTIVITY_TEACHPOINT1;}
             if (wRE_ButtonPressed[i] && i==2)
               {
@@ -537,6 +558,9 @@ task HMI()
               TextOut(0, LCD_LINE5,s);
               s=fnc_MakePointName(myActivePoint);
               TextOut(0, LCD_LINE6,s);
+              s="Global speed:";
+              s=strcat(s,NumToStr(myAutoSpeed));
+              TextOut(0, LCD_LINE7,s);
               break;
             case ACTIVITY_TYPE_SAVE_POINTS:
               s="Save points to";
@@ -597,6 +621,8 @@ task CONTROL()
        myMotionStandstill[AXIS2]=false;
        myMotionStandstill[AXIS3]=false;
        myMotionStandstill[AXIS1]=false;
+       if (POINT_NR_ON_COMPLEX)
+       {
        s="0";
        if (myActivePoint<10)
        {
@@ -613,6 +639,11 @@ task CONTROL()
          s=strcat(s,NumToStr(myActivePoint%10));
          s=strcat(s,".rso");
          PlayFileEx(s, 3, false); Wait(MS_500);
+       }
+       }
+       else
+       {
+         Wait(MS_500);
        }
       }
 
@@ -684,6 +715,7 @@ task CONTROL()
         if (myProgramActive && myInitProgram)
           {
             myInitProgram=false;
+            myAutoSpeed=AUTO_DEFAULT_SPEED;
             myProgramState=ACTIVITY_TEACHPOINT2;
             myActivePoint=myProgramState;
             myRequestSingleMotionCommand=true;
@@ -694,8 +726,8 @@ task CONTROL()
              switch (myProgramState)
                 {
                   case ACTIVITY_TEACHPOINT7  :
-                    Wait(SEC_2);
-                    if(myUltrasonicDist<ULTRASONIC_THRESHOLD || true ) {myTentativeProgState=ACTIVITY_TEACHPOINT10;}
+                    Wait(MS_500);
+                    if(myUltrasonicDist<ULTRASONIC_THRESHOLD) {myTentativeProgState=ACTIVITY_TEACHPOINT10;}
                     else {myTentativeProgState=ACTIVITY_TEACHPOINT8;}
                     break;
                   case ACTIVITY_TEACHPOINT9:
@@ -717,7 +749,7 @@ task CONTROL()
 task MOTION_AXIS1()
 {
   byte p,i,d;
-  int me;
+  int me,wPower;
   long diff;
   me=AXIS1;
   p=AXIS1_P;
@@ -743,7 +775,17 @@ task MOTION_AXIS1()
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_A, myPointsSpeed[myActivePoint][me], diff*(-1),p,i,d);
+        if (myProgramActive)
+        {
+        wPower=(myPointsSpeed[myActivePoint][me]*myAutoSpeed)/100;
+        }
+        else
+        {
+        wPower=myPointsSpeed[myActivePoint][me];
+        }
+        if (wPower<MIN_POWER) wPower=MIN_POWER;
+        if (wPower>MAX_POWER) wPower=MAX_POWER;
+        RotateMotorPID(OUT_A, wPower, diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -755,7 +797,7 @@ task MOTION_AXIS1()
 task MOTION_AXIS2()
 {
   byte p,i,d;
-  int me;
+  int me,wPower;
   long diff;
   me=AXIS2;
   p=AXIS2_P;
@@ -781,7 +823,17 @@ task MOTION_AXIS2()
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_B, myPointsSpeed[myActivePoint][me], diff*(-1),p,i,d);
+        if (myProgramActive)
+        {
+        wPower=(myPointsSpeed[myActivePoint][me]*myAutoSpeed)/100;
+        }
+        else
+        {
+        wPower=myPointsSpeed[myActivePoint][me];
+        }
+        if (wPower<MIN_POWER) wPower=MIN_POWER;
+        if (wPower>MAX_POWER) wPower=MAX_POWER;
+        RotateMotorPID(OUT_B, wPower, diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -793,7 +845,7 @@ task MOTION_AXIS2()
 task MOTION_AXIS3()
 {
   byte p,i,d;
-  int me;
+  int me,wPower;
   long diff;
   me=AXIS3;
   p=AXIS3_P;
@@ -822,7 +874,17 @@ task MOTION_AXIS3()
         myMotionInitiated[me]=true;
         myMotionStandstill[me]=false;
         myMotionActive[me]=false;
-        RotateMotorPID(OUT_C, myPointsSpeed[myActivePoint][me], diff*(-1),p,i,d);
+        if (myProgramActive)
+        {
+        wPower=(myPointsSpeed[myActivePoint][me]*myAutoSpeed)/100;
+        }
+        else
+        {
+        wPower=myPointsSpeed[myActivePoint][me];
+        }
+        if (wPower<MIN_POWER) wPower=MIN_POWER;
+        if (wPower>MAX_POWER) wPower=MAX_POWER;
+        RotateMotorPID(OUT_C, wPower, diff*(-1),p,i,d);
       }
       else  {
         myMotionStandstill[me]=true;
@@ -863,7 +925,7 @@ void init() {
   myInitItinerary=false;myItineraryActive=false;myInitProgram=false;
   myInitHoming=false;myHomingActive=false;myInitMotionAfterHoming=false;myResetHoming=false;
 
-
+  myAutoSpeed=AUTO_DEFAULT_SPEED;
 
   /*
   myPointsPosition[ACTIVITY_TEACHPOINT1][AXIS1]=AXIS_TEST_MOTION;
